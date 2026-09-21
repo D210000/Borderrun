@@ -1,0 +1,988 @@
+import { TS, generateCity } from './city'
+import { RNG } from './rng'
+import type { Guard, PlayerState, Prop, Puzzle, Toast, World } from './types'
+
+export interface DialogData {
+  title: string
+  lines: string[]
+}
+
+export interface Snapshot {
+  status:
+    | 'title'
+    | 'briefing'
+    | 'playing'
+    | 'dialog'
+    | 'puzzle'
+    | 'caught'
+    | 'collapsed'
+    | 'cityCleared'
+    | 'victory'
+  city: number
+  region: string
+  day: number
+  hour: number
+  night: boolean
+  hunger: number
+  thirst: number
+  health: number
+  coins: number
+  food: number
+  water: number
+  hasPass: boolean
+  cluesFound: number
+  cluesTotal: number
+  promptText: string | null
+  dialog: DialogData | null
+  puzzle: { puzzle: Puzzle; clueIndex: number } | null
+  toasts: Toast[]
+  caughtTimer: number
+  deathReason: string
+  daysInCity: number
+  deaths: number
+  totalDays: number
+  nearSafehouse: boolean
+  guardsAlerted: number
+}
+
+const SAVE_KEY = 'border-run-save-v1'
+
+export interface SaveData {
+  city: number
+  deaths: number
+  totalDays: number
+}
+
+export function loadSave(): SaveData | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY)
+    if (!raw) return null
+    const d = JSON.parse(raw)
+    if (typeof d.city !== 'number') return null
+    return { city: d.city, deaths: d.deaths ?? 0, totalDays: d.totalDays ?? 0 }
+  } catch {
+    return null
+  }
+}
+
+function writeSave(d: SaveData) {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(d))
+  } catch {
+    /* ignore */
+  }
+}
+
+export class Game {
+  world: World
+  player: PlayerState
+  status: Snapshot['status'] = 'playing'
+  day = 1
+  timeSec = 0 // seconds into current day
+  daysInCity = 1
+  deaths: number
+  totalDays: number
+  dialog: DialogData | null = null
+  activePuzzle: { puzzle: Puzzle; clueIndex: number } | null = null
+  toasts: Toast[] = []
+  private toastId = 1
+  promptText: string | null = null
+  caughtTimer = 0
+  deathReason = ''
+  private keys = new Set<string>()
+  private wantInteract = false
+  private wantClimb = false
+  private wantHide = false
+  private wantRun = false
+  private nearProp: Prop | null = null
+  private nearSafehouse = false
+  private climbCooldown = 0
+  private lastFrame = 0
+  private acc = 0
+  private listeners = new Set<() => void>()
+  private rng = new RNG(Date.now() >>> 0)
+  private uiTick = 0
+
+  constructor(city: number, deaths = 0, totalDays = 0) {
+    this.world = generateCity(city)
+    this.deaths = deaths
+    this.totalDays = totalDays
+    this.player = this.makePlayer()
+  }
+
+  private makePlayer(): PlayerState {
+    return {
+      x: this.world.spawn.x * TS,
+      y: this.world.spawn.y * TS,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      hunger: 100,
+      thirst: 100,
+      health: 100,
+      coins: 10 + Math.floor(this.world.city / 10) * 5,
+      food: 1,
+      water: 1,
+      hidden: false,
+      mountedProp: null,
+      clueIndex: 0,
+      hasPass: false,
+      anim: 0,
+      moving: false,
+      running: false,
+    }
+  }
+
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  }
+
+  private emit() {
+    for (const fn of this.listeners) fn()
+  }
+
+  // ---- input ------------------------------------------------------------
+
+  setKey(code: string, down: boolean) {
+    if (down) this.keys.add(code)
+    else this.keys.delete(code)
+    this.wantRun = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')
+  }
+
+  action(kind: 'interact' | 'climb' | 'hide' | 'eat' | 'drink' | 'sleep') {
+    if (kind === 'interact') this.wantInteract = true
+    if (kind === 'climb') this.wantClimb = true
+    if (kind === 'hide') this.wantHide = true
+    if (kind === 'eat') this.eat()
+    if (kind === 'drink') this.drink()
+    if (kind === 'sleep') this.trySleep()
+  }
+
+  private axis(): { x: number; y: number } {
+    let x = 0
+    let y = 0
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1
+    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y -= 1
+    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y += 1
+    return { x, y }
+  }
+
+  setTouchAxis(x: number, y: number) {
+    this.touchAxis = { x, y }
+  }
+  private touchAxis: { x: number; y: number } = { x: 0, y: 0 }
+
+  // ---- loop -------------------------------------------------------------
+
+  start() {
+    this.lastFrame = performance.now()
+    const frame = (t: number) => {
+      const dt = Math.min(0.1, (t - this.lastFrame) / 1000)
+      this.lastFrame = t
+      this.update(dt)
+      requestAnimationFrame(frame)
+    }
+    requestAnimationFrame(frame)
+  }
+
+  private update(dt: number) {
+    const playing =
+      this.status === 'playing' || this.status === 'caught' || this.status === 'cityCleared' || this.status === 'collapsed'
+    if (!playing) {
+      this.emitThrottled()
+      return
+    }
+
+    if (this.status === 'caught') {
+      this.caughtTimer -= dt
+      if (this.caughtTimer <= 0) this.restartDay()
+      this.emitThrottled()
+      return
+    }
+    if (this.status === 'collapsed') {
+      this.caughtTimer -= dt
+      if (this.caughtTimer <= 0) this.restartCity()
+      this.emitThrottled()
+      return
+    }
+    if (this.status === 'cityCleared') {
+      this.caughtTimer -= dt
+      if (this.caughtTimer <= 0) this.nextCity()
+      this.emitThrottled()
+      return
+    }
+
+    const step = 1 / 120
+    this.acc += dt
+    let guard = 0
+    while (this.acc >= step && guard < 30) {
+      this.simulate(step)
+      this.acc -= step
+      guard++
+    }
+
+    // find nearby interactable
+    this.nearProp = null
+    let bestD2 = (1.6 * TS) ** 2
+    for (const p of this.world.props) {
+      if (p.used) continue
+      const dx = p.x - this.player.x
+      const dy = p.y - this.player.y
+      const d2 = dx * dx + dy * dy
+      if (d2 < bestD2) {
+        bestD2 = d2
+        this.nearProp = p
+      }
+    }
+    this.nearSafehouse = this.world.props.some(
+      (p) => p.data === 'sleep' && (p.x - this.player.x) ** 2 + (p.y - this.player.y) ** 2 < (2 * TS) ** 2,
+    )
+
+    this.promptText = this.computePrompt()
+
+    if (this.wantInteract) {
+      this.wantInteract = false
+      this.doInteract()
+    }
+    if (this.wantClimb) {
+      this.wantClimb = false
+      this.tryClimb()
+    }
+    if (this.wantHide) {
+      this.wantHide = false
+      this.toggleHide()
+    }
+
+    this.timeSec += dt
+    if (this.timeSec >= this.world.dayLengthSec) {
+      this.timeSec -= this.world.dayLengthSec
+      this.day++
+      this.daysInCity++
+      this.totalDays++
+      // sleeping was skipped: night caught you in the open
+      if (!this.player.hidden) this.toast('You slept rough — the night took its toll.', 'bad')
+      writeSave({ city: this.world.city, deaths: this.deaths, totalDays: this.totalDays })
+    }
+
+    this.emitThrottled()
+  }
+
+  private simulate(dt: number) {
+    const p = this.player
+    const axis = this.axis()
+    axis.x += this.touchAxis.x
+    axis.y += this.touchAxis.y
+    const len = Math.hypot(axis.x, axis.y)
+    if (len > 1) {
+      axis.x /= len
+      axis.y /= len
+    }
+    p.moving = len > 0.1
+    p.running = this.wantRun && p.moving && !p.hidden
+
+    const baseSpeed = 3.6 * TS
+    const runSpeed = 5.6 * TS
+    const speed = (p.running ? runSpeed : baseSpeed) * (p.hidden ? 0.4 : 1) * (p.hunger <= 0 || p.thirst <= 0 ? 0.55 : 1)
+
+    const targetVx = axis.x * speed
+    const targetVy = axis.y * speed
+    p.vx += (targetVx - p.vx) * Math.min(1, dt * 12)
+    p.vy += (targetVy - p.vy) * Math.min(1, dt * 12)
+
+    this.moveWithCollision(p, dt)
+
+    if (p.moving) {
+      p.facing = Math.atan2(axis.y, axis.x)
+      p.anim += dt * (p.running ? 14 : 9)
+    }
+
+    // stat drain per in-game hour
+    const hoursPerSec = 24 / this.world.dayLengthSec
+    const mult = p.running ? 1.5 : 1
+    p.hunger = Math.max(0, p.hunger - this.world.drainPerHour.hunger * hoursPerSec * dt * mult)
+    p.thirst = Math.max(0, p.thirst - this.world.drainPerHour.thirst * hoursPerSec * dt * mult)
+    if (p.hunger <= 0) p.health = Math.max(0, p.health - dt * 2.2)
+    if (p.thirst <= 0) p.health = Math.max(0, p.health - dt * 3.2)
+    if (p.health <= 0) {
+      this.deathReason = p.thirst <= 0 ? 'You died of thirst.' : 'You starved.'
+      this.status = 'collapsed'
+      this.caughtTimer = 2.2
+      this.deaths++
+      this.saveMeta()
+      return
+    }
+
+    // climb cooldown
+    if (this.climbCooldown > 0) this.climbCooldown -= dt
+
+    // night visibility handled in renderer; here guards get sharper at night
+    this.updateGuards(dt)
+
+    // gate check
+    const g = this.world.gate
+    if (
+      p.hasPass &&
+      p.x > (this.world.w - 1) * TS &&
+      Math.abs(p.y - g.y * TS) < 1.5 * TS
+    ) {
+      this.status = 'cityCleared'
+      this.caughtTimer = 2.0
+      this.saveMeta()
+      return
+    }
+  }
+
+  private moveWithCollision(p: PlayerState, dt: number) {
+    const solid = (x: number, y: number): boolean => {
+      const tx = Math.floor(x / TS)
+      const ty = Math.floor(y / TS)
+      if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return true
+      const t = this.world.tiles[ty * this.world.w + tx]
+      return t === 'building' || t === 'water' || t === 'wall' || (t === 'gate' && !p.hasPass)
+    }
+    const propBlock = (x: number, y: number): boolean => {
+      for (const pr of this.world.props) {
+        if (!pr.blocking || pr.used) continue
+        if (pr.id === p.mountedProp) continue
+        if (Math.abs(pr.x - x) < 14 && Math.abs(pr.y - y) < 14) return true
+      }
+      return false
+    }
+
+    const nx = p.x + p.vx * dt
+    if (!solid(nx, p.y) && !propBlock(nx, p.y)) p.x = nx
+    else p.vx = 0
+    const ny = p.y + p.vy * dt
+    if (!solid(p.x, ny) && !propBlock(p.x, ny)) p.y = ny
+    else p.vy = 0
+
+    // gate tile lets you walk only rightward at the right edge
+    if (p.x > this.world.w * TS) p.x = this.world.w * TS
+  }
+
+  // ---- guards -----------------------------------------------------------
+
+  private updateGuards(dt: number) {
+    const p = this.player
+    const night = this.isNight()
+    for (const gd of this.world.guards) {
+      const dist = Math.hypot(p.x - gd.x, p.y - gd.y)
+      const angleTo = Math.atan2(p.y - gd.y, p.x - gd.x)
+      let angDiff = Math.abs(((angleTo - gd.dir + Math.PI * 3) % (Math.PI * 2)) - Math.PI)
+      const visible =
+        !p.hidden &&
+        dist < gd.visionDist * (night ? 0.6 : 1) &&
+        angDiff < gd.visionHalfAngle * (night ? 1.2 : 1) &&
+        this.lineOfSight(gd.x, gd.y, p.x, p.y)
+
+      if (visible) {
+        gd.alert = Math.min(1, gd.alert + dt * (dist < 2.5 * TS ? 3 : 1.4))
+        gd.lastSeen = { x: p.x, y: p.y }
+      } else {
+        gd.alert = Math.max(0, gd.alert - dt * 0.25)
+      }
+
+      if (gd.alert >= 1 && gd.state !== 'chase') {
+        gd.state = 'chase'
+        this.toast('A guard spotted you!', 'bad')
+      }
+
+      switch (gd.state) {
+        case 'suspicious':
+          gd.searchTimer -= dt
+          if (gd.searchTimer <= 0) gd.state = 'patrol'
+          break
+        case 'chase': {
+          const tx = gd.lastSeen?.x ?? p.x
+          const ty = gd.lastSeen?.y ?? p.y
+          const spd = gd.speed * TS * (night ? 1.1 : 1.0)
+          const dx = tx - gd.x
+          const dy = ty - gd.y
+          const d = Math.hypot(dx, dy) || 1
+          const vx = (dx / d) * spd
+          const vy = (dy / d) * spd
+          const before = { x: gd.x, y: gd.y }
+          if (!this.guardSolidMove(gd, vx * dt, vy * dt)) {
+            gd.stuckTimer += dt
+            if (gd.stuckTimer > 0.8) {
+              // slide around obstacles
+              const s = Math.sign(vy) || 1
+              this.guardSolidMove(gd, 0, s * spd * dt)
+              if (Math.hypot(gd.x - before.x, gd.y - before.y) < 0.5) this.guardSolidMove(gd, s * spd * dt, 0)
+              if (gd.stuckTimer > 2.5) {
+                gd.state = 'search'
+                gd.searchTimer = 2.5
+                gd.stuckTimer = 0
+              }
+            }
+          } else gd.stuckTimer = 0
+          gd.dir = Math.atan2(dy, dx)
+          if (dist < 18 && !p.hidden) {
+            this.caught(gd)
+            return
+          }
+          if (gd.alert <= 0.05) {
+            gd.state = 'search'
+            gd.searchTimer = 3
+          }
+          break
+        }
+        case 'search': {
+          gd.searchTimer -= dt
+          if (gd.searchTimer <= 0) {
+            gd.state = 'return'
+          }
+          break
+        }
+        case 'return': {
+          const target = gd.path[gd.wp]
+          const dx = target.x * TS - gd.x
+          const dy = target.y * TS - gd.y
+          const d = Math.hypot(dx, dy) || 1
+          const moved = this.guardSolidMove(gd, (dx / d) * gd.speed * TS * dt, (dy / d) * gd.speed * TS * dt)
+          gd.dir = Math.atan2(dy, dx)
+          if (!moved && Math.hypot(dx, dy) > 10) {
+            gd.stuckTimer += dt
+            if (gd.stuckTimer > 2) {
+              gd.state = 'patrol'
+              gd.stuckTimer = 0
+            }
+          } else gd.stuckTimer = 0
+          if (d < 12) {
+            gd.state = 'patrol'
+            gd.alert = 0
+          }
+          break
+        }
+      }
+
+      if (gd.state === 'patrol') {
+        const target = gd.path[gd.wp]
+        const dx = target.x * TS - gd.x
+        const dy = target.y * TS - gd.y
+        const d = Math.hypot(dx, dy) || 1
+        if (d < 10) {
+          gd.wp = (gd.wp + 1) % gd.path.length
+        } else {
+          const moved = this.guardSolidMove(gd, (dx / d) * gd.speed * TS * 0.6 * dt, (dy / d) * gd.speed * TS * 0.6 * dt)
+          gd.dir = Math.atan2(dy, dx)
+          if (!moved) {
+            gd.wp = (gd.wp + 1) % gd.path.length
+          }
+        }
+      }
+      // suspicious transition
+      if (gd.state === 'patrol' && gd.alert > 0.4 && gd.alert < 1) {
+        gd.state = 'suspicious'
+        gd.searchTimer = 1.5
+      }
+    }
+  }
+
+  private guardSolidMove(gd: Guard, dx: number, dy: number): boolean {
+    const before = { x: gd.x, y: gd.y }
+    const solid = (x: number, y: number): boolean => {
+      const tx = Math.floor(x / TS)
+      const ty = Math.floor(y / TS)
+      if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return true
+      const t = this.world.tiles[ty * this.world.w + tx]
+      return t === 'building' || t === 'water' || t === 'wall'
+    }
+    const propBlock = (x: number, y: number): boolean => {
+      for (const pr of this.world.props) {
+        if (!pr.blocking || pr.used) continue
+        if (pr.climbable && Math.abs(pr.y - y) < 10) continue // guards step over crates
+        if (Math.abs(pr.x - x) < 14 && Math.abs(pr.y - y) < 14) return true
+      }
+      return false
+    }
+    const nx = gd.x + dx
+    if (!solid(nx, gd.y) && !propBlock(nx, gd.y)) gd.x = nx
+    const ny = gd.y + dy
+    if (!solid(gd.x, ny) && !propBlock(gd.x, ny)) gd.y = ny
+    return Math.hypot(gd.x - before.x, gd.y - before.y) > Math.hypot(dx, dy) * 0.25
+  }
+
+  private lineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
+    const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / (TS / 2))
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps
+      const x = x1 + (x2 - x1) * t
+      const y = y1 + (y2 - y1) * t
+      const tx = Math.floor(x / TS)
+      const ty = Math.floor(y / TS)
+      if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return false
+      const tile = this.world.tiles[ty * this.world.w + tx]
+      if (tile === 'building' || tile === 'wall') return false
+    }
+    return true
+  }
+
+  private caught(gd: Guard) {
+    this.status = 'caught'
+    this.caughtTimer = 2.4
+    gd.alert = 0
+    gd.state = 'search'
+    gd.searchTimer = 3
+    const lostFood = Math.min(this.player.food, 1)
+    this.player.food -= lostFood
+    const fine = Math.min(this.player.coins, 5 + Math.floor(this.world.city / 10) * 2)
+    this.player.coins -= fine
+    this.player.hunger = Math.max(0, this.player.hunger - 15)
+    this.player.thirst = Math.max(0, this.player.thirst - 15)
+    this.toast(
+      `Caught! They took ${fine} coins${lostFood ? ' and your food' : ''}. Back to the checkpoint.`,
+      'bad',
+    )
+  }
+
+  // ---- interactions -----------------------------------------------------
+
+  private computePrompt(): string | null {
+    const p = this.nearProp
+    if (!p) {
+      if (this.nearSafehouse) return 'Sleep (T) until morning'
+      return null
+    }
+    switch (p.kind) {
+      case 'fountain':
+        return 'Drink (E) from the fountain'
+      case 'shop':
+        return p.data === 'food' ? 'Shop: buy food (E, 8 coins)' : 'Shop: buy water (E, 8 coins)'
+      case 'house':
+        return p.data === 'food' ? 'Ask for food (E)' : 'Ask for water (E)'
+      case 'trash':
+        return 'Search trash (E) — risky'
+      case 'coin':
+        return 'Pick up coin (E)'
+      case 'board':
+      case 'bar':
+      case 'kid':
+      case 'radio':
+      case 'graffiti':
+        return p.data === 'clue' ? 'Investigate clue (E)' : 'Chat (E) — maybe gossip'
+      case 'stall':
+        return 'Market stall: food 6c / water 6c (E)'
+      default:
+        return null
+    }
+  }
+
+  private doInteract() {
+    const p = this.player
+    const prop = this.nearProp
+    if (this.nearSafehouse && !prop) {
+      this.trySleep()
+      return
+    }
+    if (!prop) return
+    switch (prop.kind) {
+      case 'fountain':
+        p.thirst = 100
+        this.toast('You drank deeply. Thirst quenched.', 'good')
+        break
+      case 'shop':
+        if (prop.data === 'food') {
+          if (p.coins >= 8) {
+            p.coins -= 8
+            p.food++
+            this.toast('Bought food for 8 coins.', 'good')
+          } else this.toast('Not enough coins (need 8).', 'bad')
+        } else {
+          if (p.coins >= 8) {
+            p.coins -= 8
+            p.water++
+            this.toast('Bought water for 8 coins.', 'good')
+          } else this.toast('Not enough coins (need 8).', 'bad')
+        }
+        break
+      case 'stall':
+        if (p.coins >= 6) {
+          p.coins -= 6
+          if (this.rng.chance(0.5)) p.food++
+          else p.water++
+          this.toast('Bought something from the stall for 6 coins.', 'good')
+        } else this.toast('Not enough coins (need 6).', 'bad')
+        break
+      case 'house': {
+        const success = this.rng.chance(0.65)
+        if (success) {
+          if (prop.data === 'food') {
+            p.food++
+            this.toast('A kind stranger gave you food.', 'good')
+          } else {
+            p.water++
+            this.toast('A kind stranger gave you water.', 'good')
+          }
+          prop.used = true
+        } else {
+          this.toast('The door stayed shut.', 'info')
+          // small chance of a guard alert
+          if (this.rng.chance(0.25)) {
+            for (const gd of this.world.guards) gd.alert = Math.min(1, gd.alert + 0.35)
+          }
+        }
+        break
+      }
+      case 'trash': {
+        prop.used = true
+        const roll = this.rng.next()
+        if (roll < 0.3) {
+          p.food++
+          this.toast('Found half a sandwich in the trash. Not bad.', 'good')
+        } else if (roll < 0.5) {
+          p.water++
+          this.toast('Found a bottle of water.', 'good')
+        } else if (roll < 0.62) {
+          p.coins += this.rng.int(2, 6)
+          this.toast('Found a few coins!', 'good')
+        } else if (roll < 0.72) {
+          this.toast('The trash was sickening. You feel ill.', 'bad')
+          p.health = Math.max(20, p.health - 12)
+        } else {
+          this.toast('Nothing but old papers.', 'info')
+        }
+        break
+      }
+      case 'coin':
+        prop.used = true
+        p.coins += this.rng.int(2, 5)
+        this.toast('Picked up coins.', 'good')
+        break
+      case 'board':
+      case 'bar':
+      case 'kid':
+      case 'radio':
+      case 'graffiti':
+        if (prop.data === 'clue') this.openClue(prop)
+        else this.gossip(prop)
+        break
+      default:
+        break
+    }
+  }
+
+  private gossip(prop: Prop) {
+    prop.used = true
+    const city = this.world.city
+    const lines = [
+      `Trouble in ${this.world.region.name} these days. Guards everywhere.`,
+      `They say City ${city + 1} is worse. If you make it there.`,
+      'The border gate needs a pass. No pass, no exit.',
+      'Water is free at the fountains. Food will cost you.',
+      'Sleep on benches — streets are dangerous at night.',
+      'I saw the courier. Ask the landmarks — boards, radios, kids. They know things.',
+    ]
+    const i = this.rng.int(0, lines.length - 1)
+    this.dialog = { title: 'Local', lines: [lines[i]] }
+    this.status = 'dialog'
+  }
+
+  private openClue(prop: Prop) {
+    const idx = this.player.clueIndex
+    const clue = this.world.clues[idx]
+    if (!clue || clue.propId !== prop.id) {
+      // wrong landmark: give vague flavor
+      this.dialog = {
+        title: 'Dead end',
+        lines: ['"You are looking in the wrong place, friend."'],
+      }
+      this.status = 'dialog'
+      return
+    }
+    if (clue.puzzle) {
+      this.activePuzzle = { puzzle: clue.puzzle, clueIndex: idx }
+      this.status = 'puzzle'
+      return
+    }
+    this.grantClue(idx)
+  }
+
+  grantClue(idx: number) {
+    const clue = this.world.clues[idx]
+    this.player.clueIndex = idx + 1
+    if (this.player.clueIndex >= this.world.clues.length) {
+      this.player.hasPass = true
+      this.toast('BORDER PASS acquired! Get to the east gate!', 'good')
+      this.dialog = {
+        title: 'Border pass',
+        lines: [
+          clue.riddle,
+          '"Here — the stamp. The gate to the east will open for you. Go, before the shift changes."',
+        ],
+      }
+    } else {
+      this.toast('Clue found! Follow the trail.', 'good')
+      this.dialog = { title: 'Clue', lines: [clue.riddle] }
+    }
+    this.status = 'dialog'
+  }
+
+  answerPuzzle(answer: string | number[]) {
+    const active = this.activePuzzle
+    if (!active) return
+    const puz = active.puzzle
+    let ok = false
+    if (puz.kind === 'word') ok = String(answer).trim().toUpperCase() === puz.answer
+    else if (puz.kind === 'code') ok = String(answer).trim() === puz.answer
+    else if (puz.kind === 'choice') ok = (answer as unknown) === puz.answer
+    else if (puz.kind === 'sequence') {
+      ok = (answer as number[]).length === puz.answer.length && (answer as number[]).every((v, i) => v === puz.answer[i])
+    }
+    if (ok) {
+      this.activePuzzle = null
+      this.grantClue(active.clueIndex)
+    } else {
+      this.toast('Wrong! Think again...', 'bad')
+      this.status = 'puzzle'
+    }
+  }
+
+  closeDialog() {
+    this.dialog = null
+    if (this.status === 'dialog') this.status = 'playing'
+  }
+
+  cancelPuzzle() {
+    this.activePuzzle = null
+    if (this.status === 'puzzle') this.status = 'playing'
+  }
+
+  // ---- survival actions -------------------------------------------------
+
+  eat() {
+    if (this.player.food <= 0) {
+      this.toast('No food left.', 'bad')
+      return
+    }
+    this.player.food--
+    this.player.hunger = Math.min(100, this.player.hunger + 55)
+    this.player.health = Math.min(100, this.player.health + 8)
+    this.toast('You ate. Hunger eased.', 'good')
+  }
+
+  drink() {
+    if (this.player.water <= 0) {
+      this.toast('No water left.', 'bad')
+      return
+    }
+    this.player.water--
+    this.player.thirst = Math.min(100, this.player.thirst + 60)
+    this.player.health = Math.min(100, this.player.health + 6)
+    this.toast('You drank. Thirst eased.', 'good')
+  }
+
+  private trySleep() {
+    if (!this.nearSafehouse) {
+      this.toast('Find a bench or a safe corner to sleep.', 'info')
+      return
+    }
+    // sleep: advance to morning, restore some health, drain stats a bit
+    const daySecs = this.world.dayLengthSec
+    const elapsed = this.timeSec
+    const toMorning = daySecs - elapsed + daySecs * 0.25
+    const hours = (toMorning / daySecs) * 24
+    const p = this.player
+    p.hunger = Math.max(0, p.hunger - hours * this.world.drainPerHour.hunger)
+    p.thirst = Math.max(0, p.thirst - hours * this.world.drainPerHour.thirst)
+    p.health = Math.min(100, p.health + 25)
+    this.timeSec = daySecs * 0.25
+    this.day++
+    this.daysInCity++
+    this.totalDays++
+    // reset guards to patrol
+    for (const gd of this.world.guards) {
+      gd.state = 'patrol'
+      gd.alert = 0
+      const wp = gd.path[gd.wp]
+      gd.x = wp.x * TS
+      gd.y = wp.y * TS
+    }
+    this.toast(`You slept until morning. Day ${this.day}.`, 'info')
+    this.saveMeta()
+  }
+
+  private tryClimb() {
+    if (this.climbCooldown > 0) return
+    // find nearest climbable within range
+    let best: Prop | null = null
+    let bestD2 = (1.7 * TS) ** 2
+    for (const p of this.world.props) {
+      if (!p.climbable || p.used) continue
+      const d2 = (p.x - this.player.x) ** 2 + (p.y - this.player.y) ** 2
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = p
+      }
+    }
+    if (!best) {
+      this.toast('Nothing to climb here.', 'info')
+      return
+    }
+    this.climbCooldown = 0.8
+    // climbing lets you pass through: briefly become non-solid by vaulting over
+    const dirx = Math.cos(this.player.facing)
+    const diry = Math.sin(this.player.facing)
+    const overX = this.player.x + dirx * 30
+    const overY = this.player.y + diry * 30
+    const tx = Math.floor(overX / TS)
+    const ty = Math.floor(overY / TS)
+    const t = tx >= 0 && ty >= 0 && tx < this.world.w && ty < this.world.h ? this.world.tiles[ty * this.world.w + tx] : 'building'
+    if (t === 'building' || t === 'water' || t === 'wall') {
+      this.toast("Can't climb in that direction.", 'info')
+      return
+    }
+    this.player.x = overX
+    this.player.y = overY
+    this.player.anim = 0
+    this.toast('Vaulted over.', 'info')
+    if (this.rng.chance(0.12)) {
+      this.player.coins += 1
+      this.toast('You found a coin on top!', 'good')
+    }
+  }
+
+  private toggleHide() {
+    const p = this.player
+    if (p.hidden) {
+      p.hidden = false
+      this.toast('You stepped out.', 'info')
+      return
+    }
+    let best: Prop | null = null
+    let bestD2 = (1.7 * TS) ** 2
+    for (const prop of this.world.props) {
+      if (!prop.hide || prop.used) continue
+      const d2 = (prop.x - p.x) ** 2 + (prop.y - p.y) ** 2
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = prop
+      }
+    }
+    if (!best) {
+      this.toast('Nothing to hide in here.', 'info')
+      return
+    }
+    p.hidden = true
+    this.toast('Hidden. Hold still...', 'good')
+  }
+
+  // ---- transitions ------------------------------------------------------
+
+  private saveMeta() {
+    writeSave({
+      city: this.world.city,
+      deaths: this.deaths,
+      totalDays: this.totalDays,
+    })
+  }
+
+  restartDay() {
+    // caught: keep day, reset guards + position
+    this.status = 'playing'
+    this.player.x = this.world.spawn.x * TS
+    this.player.y = this.world.spawn.y * TS
+    this.player.hidden = false
+    for (const gd of this.world.guards) {
+      gd.state = 'patrol'
+      gd.alert = 0
+      const wp = gd.path[0]
+      gd.x = wp.x * TS
+      gd.y = wp.y * TS
+    }
+  }
+
+  restartCity() {
+    this.status = 'playing'
+    this.day = 1
+    this.daysInCity = 1
+    this.player = this.makePlayer()
+    for (const gd of this.world.guards) {
+      gd.state = 'patrol'
+      gd.alert = 0
+      const wp = gd.path[0]
+      gd.x = wp.x * TS
+      gd.y = wp.y * TS
+    }
+    for (const p of this.world.props) {
+      if (p.kind === 'coin') p.used = false
+      if (p.kind === 'trash') p.used = false
+    }
+    this.toast(`Back to Day 1 of City ${this.world.city}. Stay alive this time.`, 'bad')
+  }
+
+  nextCity() {
+    const next = this.world.city + 1
+    if (next > 100) {
+      this.status = 'victory'
+      writeSave({ city: 100, deaths: this.deaths, totalDays: this.totalDays })
+      return
+    }
+    writeSave({ city: next, deaths: this.deaths, totalDays: this.totalDays })
+    this.world = generateCity(next)
+    this.player = this.makePlayer()
+    this.day = 1
+    this.daysInCity = 1
+    this.timeSec = 0
+    this.status = 'playing'
+    this.toast(
+      `City ${next} — ${this.world.region.name}. ${next === 100 ? 'THE LAST CITY. Almost free!' : 'Find the clue trail.'}`,
+      'info',
+    )
+  }
+
+  toast(text: string, kind: Toast['kind'] = 'info') {
+    this.toasts.push({ id: this.toastId++, text, kind, t: 3.5 })
+    if (this.toasts.length > 4) this.toasts.shift()
+  }
+
+  private tickToasts(dt: number) {
+    for (const t of this.toasts) t.t -= dt
+    this.toasts = this.toasts.filter((t) => t.t > 0)
+  }
+
+  isNight(): boolean {
+    const frac = this.timeSec / this.world.dayLengthSec
+    return frac > 0.75 || frac < 0.1
+  }
+
+  private emitThrottled() {
+    this.tickToasts(1 / 60)
+    this.uiTick++
+    if (this.uiTick % 4 === 0) this.emit()
+  }
+
+  getSnapshot(): Snapshot {
+    const hour = Math.floor((this.timeSec / this.world.dayLengthSec) * 24)
+    return {
+      status: this.status,
+      city: this.world.city,
+      region: this.world.region.name,
+      day: this.day,
+      hour,
+      night: this.isNight(),
+      hunger: this.player.hunger,
+      thirst: this.player.thirst,
+      health: this.player.health,
+      coins: this.player.coins,
+      food: this.player.food,
+      water: this.player.water,
+      hasPass: this.player.hasPass,
+      cluesFound: this.player.clueIndex,
+      cluesTotal: this.world.clues.length,
+      promptText: this.promptText,
+      dialog: this.dialog,
+      puzzle: this.activePuzzle,
+      toasts: [...this.toasts],
+      caughtTimer: this.caughtTimer,
+      deathReason: this.deathReason,
+      daysInCity: this.daysInCity,
+      deaths: this.deaths,
+      totalDays: this.totalDays,
+      nearSafehouse: this.nearSafehouse,
+      guardsAlerted: this.world.guards.filter((g) => g.state === 'chase').length,
+    }
+  }
+}
