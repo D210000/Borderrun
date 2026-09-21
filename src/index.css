@@ -12,12 +12,18 @@ body,
   background: #14170f;
   font-family: 'Segoe UI', system-ui, sans-serif;
   color: #e8e4d8;
+  /* no text-selection or callout menus while playing */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
 }
 
 .app {
   position: relative;
   width: 100%;
   height: 100%;
+  height: 100dvh; /* track mobile browser chrome (URL bar) */
 }
 
 .game-canvas {
@@ -250,6 +256,7 @@ button {
   cursor: pointer;
   margin: 6px 4px 0;
   transition: background 0.15s;
+  touch-action: manipulation; /* kills the double-tap-zoom delay */
 }
 
 button:hover:not(:disabled) {
@@ -282,13 +289,15 @@ button.ghost {
   width: 100%;
   margin: 12px auto 4px;
   padding: 10px 12px;
-  font-size: 16px;
+  font-size: 16px; /* 16px+ stops iOS auto-zoom on focus */
   background: #12150e;
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 8px;
   color: #e8e4d8;
   text-align: center;
   outline: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .panel input:focus {
@@ -371,10 +380,10 @@ button.ghost {
 .joy-pad {
   pointer-events: auto;
   position: absolute;
-  left: 22px;
-  bottom: 48px;
-  width: 110px;
-  height: 110px;
+  left: max(22px, env(safe-area-inset-left) + 14px);
+  bottom: max(48px, env(safe-area-inset-bottom) + 28px);
+  width: 124px;
+  height: 124px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -385,9 +394,9 @@ button.ghost {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 46px;
-  height: 46px;
-  margin: -23px 0 0 -23px;
+  width: 50px;
+  height: 50px;
+  margin: -25px 0 0 -25px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -396,21 +405,130 @@ button.ghost {
 .touch-btns {
   pointer-events: auto;
   position: absolute;
-  right: 18px;
-  bottom: 40px;
+  right: max(18px, env(safe-area-inset-right) + 10px);
+  bottom: max(40px, env(safe-area-inset-bottom) + 24px);
   display: grid;
-  grid-template-columns: repeat(2, 56px);
-  gap: 8px;
+  grid-template-columns: repeat(2, 58px);
+  gap: 9px;
 }
 
 .touch-btns button {
-  width: 56px;
-  height: 56px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
-  font-size: 17px;
+  font-size: 18px;
   padding: 0;
   margin: 0;
   background: rgba(20, 24, 14, 0.75);
+  touch-action: none;
+}
+
+/* ---------- Small screens / phones ---------- */
+
+@media (max-width: 520px) {
+  .hud-top-left {
+    top: max(8px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+  }
+
+  .hud-title {
+    font-size: 14.5px;
+  }
+
+  .hud-sub {
+    font-size: 11.5px;
+  }
+
+  .hud-top-right {
+    top: max(8px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    width: 140px;
+  }
+
+  .stat {
+    font-size: 10px;
+    gap: 5px;
+  }
+
+  .stat-label {
+    width: 36px;
+  }
+
+  .inv {
+    font-size: 11px;
+  }
+
+  .hud-bottom-left {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: max(12px, env(safe-area-inset-left));
+    font-size: 12px;
+    max-width: 46vw; /* keep clear of the joystick */
+  }
+
+  .prompt {
+    bottom: 150px;
+    font-size: 12.5px;
+    max-width: 78vw;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .toasts {
+    top: 70px;
+  }
+
+  .toast {
+    font-size: 12px;
+    max-width: 86vw;
+  }
+
+  .panel {
+    padding: 18px 16px;
+    max-height: 88dvh;
+    overflow-y: auto;
+  }
+
+  .panel h1 {
+    font-size: 26px;
+  }
+
+  .panel h2 {
+    font-size: 18px;
+  }
+
+  .panel p {
+    font-size: 13.5px;
+  }
+
+  .puzzle-body {
+    font-size: 18px !important;
+  }
+
+  .seq-btn {
+    font-size: 22px;
+    padding: 14px 15px;
+  }
+
+  .joy-pad {
+    width: 112px;
+    height: 112px;
+    bottom: max(24px, env(safe-area-inset-bottom) + 12px);
+  }
+
+  .touch-btns {
+    bottom: max(20px, env(safe-area-inset-bottom) + 10px);
+    grid-template-columns: repeat(3, 54px);
+  }
+
+  .touch-btns button {
+    width: 54px;
+    height: 54px;
+  }
+
+  .controls-hint {
+    font-size: 11px;
+    margin-top: 18px;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -26,16 +26,24 @@ export default function App() {
     if (!ctx) return
 
     const resize = () => {
-      canvas.width = canvas.clientWidth
-      canvas.height = canvas.clientHeight
+      // render at device resolution for crisp pixels on phone screens
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      canvas.width = Math.round(canvas.clientWidth * dpr)
+      canvas.height = Math.round(canvas.clientHeight * dpr)
     }
     resize()
     window.addEventListener('resize', resize)
+    window.visualViewport?.addEventListener('resize', resize)
 
     let raf = 0
     const loop = () => {
       const g = gameRef.current
-      if (g) render(ctx, g, canvas.width, canvas.height)
+      if (g) {
+        // render in CSS pixels; backing store is device-scaled for sharpness
+        const dpr = Math.min(2, window.devicePixelRatio || 1)
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        render(ctx, g, canvas.clientWidth, canvas.clientHeight)
+      }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)

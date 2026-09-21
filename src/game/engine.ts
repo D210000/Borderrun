@@ -94,6 +94,7 @@ export class Game {
   private wantClimb = false
   private wantHide = false
   private wantRun = false
+  private touchRun = false
   private nearProp: Prop | null = null
   private nearSafehouse = false
   private climbCooldown = 0
@@ -148,6 +149,11 @@ export class Game {
     if (down) this.keys.add(code)
     else this.keys.delete(code)
     this.wantRun = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')
+  }
+
+  // mobile: pushing the joystick to its edge means run
+  setTouchRun(run: boolean) {
+    this.touchRun = run
   }
 
   action(kind: 'interact' | 'climb' | 'hide' | 'eat' | 'drink' | 'sleep') {
@@ -280,7 +286,7 @@ export class Game {
       axis.y /= len
     }
     p.moving = len > 0.1
-    p.running = this.wantRun && p.moving && !p.hidden
+    p.running = (this.wantRun || this.touchRun) && p.moving && !p.hidden
 
     const baseSpeed = 3.6 * TS
     const runSpeed = 5.6 * TS
