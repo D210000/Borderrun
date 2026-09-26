@@ -1,6 +1,8 @@
-import { TS, generateCity } from './city'
+import { CITIES_PER_REGION, TS, clueAssist, generateCity, REGIONS, regionIndexForCity } from './city'
+import { DEFAULT_SKIN_ID } from './brand'
+import { saveProfile, type Profile, type RunState } from './profile'
 import { RNG } from './rng'
-import type { Guard, PlayerState, Prop, Puzzle, Toast, World } from './types'
+import type { CharacterPose, Guard, PlayerState, Prop, Puzzle, Toast, World } from './types'
 
 export interface DialogData {
   title: string
@@ -43,35 +45,33 @@ export interface Snapshot {
   totalDays: number
   nearSafehouse: boolean
   guardsAlerted: number
+  /** avatar skin id (brand.ts registry) */
+  skin: string
+  regionId: string
+  regionIndex: number
+  /** true once the first clue of this city is found — unlocks readable clue text */
+  clueKnown: boolean
+  /** riddle text for the clue the player is on */
+  clueHint: string
+  playerName: string
+  /**
+   * Signal tracker on the next clue. Only present in the first few cities and for
+   * the first two clues of a chain — after that the riddles are all you get.
+   */
+  clueTrack: { angle: number; distanceTiles: number } | null
 }
 
-const SAVE_KEY = 'border-run-save-v1'
-
-export interface SaveData {
-  city: number
-  deaths: number
-  totalDays: number
+export interface GameOptions {
+  /** avatar skin id from the brand registry */
+  skinId?: string
+  /** when supplied, progress/stats are written straight into it (autosave) */
+  profile?: Profile | null
+  /** mid-run survival state to restore (same city only) */
+  resume?: RunState | null
 }
 
-export function loadSave(): SaveData | null {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY)
-    if (!raw) return null
-    const d = JSON.parse(raw)
-    if (typeof d.city !== 'number') return null
-    return { city: d.city, deaths: d.deaths ?? 0, totalDays: d.totalDays ?? 0 }
-  } catch {
-    return null
-  }
-}
-
-function writeSave(d: SaveData) {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(d))
-  } catch {
-    /* ignore */
-  }
-}
+/** how often mid-run state is flushed to the profile, in seconds */
+const AUTOSAVE_INTERVAL = 10
 
 export class Game {
   world: World
@@ -103,16 +103,37 @@ export class Game {
   private listeners = new Set<() => void>()
   private rng = new RNG(Date.now() >>> 0)
   private uiTick = 0
+  private profile: Profile | null
+  private skinId: string
+  private saveAccum = 0
 
-  constructor(city: number, deaths = 0, totalDays = 0) {
-    this.world = generateCity(city)
+  constructor(city: number, deaths = 0, totalDays = 0, opts: GameOptions = {}) {
+    this.world = generateCity(Math.max(1, Math.min(100, Math.round(city))))
     this.deaths = deaths
     this.totalDays = totalDays
-    this.player = this.makePlayer()
+    this.profile = opts.profile ?? null
+    this.skinId = opts.skinId ?? this.profile?.skin ?? DEFAULT_SKIN_ID
+    this.player = this.makePlayer(opts.resume ?? null)
+    if (this.profile) {
+      this.profile.stats.attempts++
+      this.profile.skin = this.skinId
+      this.checkpoint()
+    }
   }
 
-  private makePlayer(): PlayerState {
-    return {
+  setSkin(skinId: string) {
+    this.skinId = skinId
+    if (this.profile) this.profile.skin = skinId
+    this.checkpoint()
+    this.emit()
+  }
+
+  getSkin(): string {
+    return this.skinId
+  }
+
+  private makePlayer(resume: RunState | null = null): PlayerState {
+    const base: PlayerState = {
       x: this.world.spawn.x * TS,
       y: this.world.spawn.y * TS,
       vx: 0,
@@ -131,7 +152,21 @@ export class Game {
       anim: 0,
       moving: false,
       running: false,
+      pose: 'idle' as CharacterPose,
+      poseTimer: 0,
     }
+    // resuming the same city keeps hunger/thirst/coins and clue progress
+    if (resume && resume.city === this.world.city) {
+      base.hunger = resume.hunger
+      base.thirst = resume.thirst
+      base.health = resume.health
+      base.coins = resume.coins
+      base.food = resume.food
+      base.water = resume.water
+      base.clueIndex = Math.max(0, Math.min(this.world.clues.length, resume.clueIndex))
+      base.hasPass = base.clueIndex >= this.world.clues.length
+    }
+    return base
   }
 
   subscribe(fn: () => void): () => void {
@@ -154,6 +189,12 @@ export class Game {
   // mobile: pushing the joystick to its edge means run
   setTouchRun(run: boolean) {
     this.touchRun = run
+  }
+
+  /** transient pose (climb / sleep / interact) that overrides the walk cycle */
+  private setPose(pose: CharacterPose, seconds: number) {
+    this.player.pose = pose
+    this.player.poseTimer = seconds
   }
 
   action(kind: 'interact' | 'climb' | 'hide' | 'eat' | 'drink' | 'sleep') {
@@ -229,6 +270,14 @@ export class Game {
       guard++
     }
 
+    // profile bookkeeping + periodic autosave
+    if (this.profile) this.profile.stats.timePlayedSec += dt
+    this.saveAccum += dt
+    if (this.saveAccum >= AUTOSAVE_INTERVAL) {
+      this.saveAccum = 0
+      this.checkpoint()
+    }
+
     // find nearby interactable
     this.nearProp = null
     let bestD2 = (1.6 * TS) ** 2
@@ -269,7 +318,7 @@ export class Game {
       this.totalDays++
       // sleeping was skipped: night caught you in the open
       if (!this.player.hidden) this.toast('You slept rough — the night took its toll.', 'bad')
-      writeSave({ city: this.world.city, deaths: this.deaths, totalDays: this.totalDays })
+      this.checkpoint()
     }
 
     this.emitThrottled()
@@ -287,6 +336,11 @@ export class Game {
     }
     p.moving = len > 0.1
     p.running = (this.wantRun || this.touchRun) && p.moving && !p.hidden
+
+    // walk-cycle pose, unless a transient pose (climb / sleep / interact) is playing
+    if (p.poseTimer > 0) p.poseTimer -= dt
+    else if (p.hidden) p.pose = 'crouch'
+    else p.pose = p.moving ? 'run' : 'idle'
 
     const baseSpeed = 3.6 * TS
     const runSpeed = 5.6 * TS
@@ -316,6 +370,7 @@ export class Game {
       this.status = 'collapsed'
       this.caughtTimer = 2.2
       this.deaths++
+      if (this.profile) this.profile.stats.deaths++
       this.saveMeta()
       return
     }
@@ -539,7 +594,7 @@ export class Game {
     this.player.hunger = Math.max(0, this.player.hunger - 15)
     this.player.thirst = Math.max(0, this.player.thirst - 15)
     this.toast(
-      `Caught! They took ${fine} coins${lostFood ? ' and your food' : ''}. Back to the checkpoint.`,
+      `Caught! They took ${fine} $DLI${lostFood ? ' and your food' : ''}. Back to the checkpoint.`,
       'bad',
     )
   }
@@ -556,13 +611,13 @@ export class Game {
       case 'fountain':
         return 'Drink (E) from the fountain'
       case 'shop':
-        return p.data === 'food' ? 'Shop: buy food (E, 8 coins)' : 'Shop: buy water (E, 8 coins)'
+        return p.data === 'food' ? 'Shop: buy food (E, 8 $DLI)' : 'Shop: buy water (E, 8 $DLI)'
       case 'house':
         return p.data === 'food' ? 'Ask for food (E)' : 'Ask for water (E)'
       case 'trash':
         return 'Search trash (E) — risky'
       case 'coin':
-        return 'Pick up coin (E)'
+        return 'Pick up $DLI (E)'
       case 'board':
       case 'bar':
       case 'kid':
@@ -570,7 +625,7 @@ export class Game {
       case 'graffiti':
         return p.data === 'clue' ? 'Investigate clue (E)' : 'Chat (E) — maybe gossip'
       case 'stall':
-        return 'Market stall: food 6c / water 6c (E)'
+        return 'Market stall: food 6 $DLI / water 6 $DLI (E)'
       default:
         return null
     }
@@ -579,6 +634,7 @@ export class Game {
   private doInteract() {
     const p = this.player
     const prop = this.nearProp
+    if (prop) this.setPose('interact', 0.6)
     if (this.nearSafehouse && !prop) {
       this.trySleep()
       return
@@ -594,14 +650,14 @@ export class Game {
           if (p.coins >= 8) {
             p.coins -= 8
             p.food++
-            this.toast('Bought food for 8 coins.', 'good')
-          } else this.toast('Not enough coins (need 8).', 'bad')
+            this.toast('Bought food for 8 $DLI.', 'good')
+          } else this.toast('Not enough $DLI (need 8).', 'bad')
         } else {
           if (p.coins >= 8) {
             p.coins -= 8
             p.water++
-            this.toast('Bought water for 8 coins.', 'good')
-          } else this.toast('Not enough coins (need 8).', 'bad')
+            this.toast('Bought water for 8 $DLI.', 'good')
+          } else this.toast('Not enough $DLI (need 8).', 'bad')
         }
         break
       case 'stall':
@@ -609,8 +665,8 @@ export class Game {
           p.coins -= 6
           if (this.rng.chance(0.5)) p.food++
           else p.water++
-          this.toast('Bought something from the stall for 6 coins.', 'good')
-        } else this.toast('Not enough coins (need 6).', 'bad')
+          this.toast('Bought something from the stall for 6 $DLI.', 'good')
+        } else this.toast('Not enough $DLI (need 6).', 'bad')
         break
       case 'house': {
         const success = this.rng.chance(0.65)
@@ -624,7 +680,7 @@ export class Game {
           }
           prop.used = true
         } else {
-          this.toast('The door stayed shut.', 'info')
+          this.toast('The door stayed shut — nobody home.', 'info')
           // small chance of a guard alert
           if (this.rng.chance(0.25)) {
             for (const gd of this.world.guards) gd.alert = Math.min(1, gd.alert + 0.35)
@@ -642,21 +698,24 @@ export class Game {
           p.water++
           this.toast('Found a bottle of water.', 'good')
         } else if (roll < 0.62) {
-          p.coins += this.rng.int(2, 6)
-          this.toast('Found a few coins!', 'good')
+          const dli = this.rng.int(2, 6)
+          p.coins += dli
+          this.toast(`Found +${dli} $DLI in the trash!`, 'good')
         } else if (roll < 0.72) {
           this.toast('The trash was sickening. You feel ill.', 'bad')
           p.health = Math.max(20, p.health - 12)
         } else {
-          this.toast('Nothing but old papers.', 'info')
+          this.toast('Nothing but old papers. (bin emptied)', 'info')
         }
         break
       }
-      case 'coin':
+      case 'coin': {
         prop.used = true
-        p.coins += this.rng.int(2, 5)
-        this.toast('Picked up coins.', 'good')
+        const dli = this.rng.int(2, 5)
+        p.coins += dli
+        this.toast(`+${dli} $DLI`, 'good')
         break
+      }
       case 'board':
       case 'bar':
       case 'kid':
@@ -672,6 +731,7 @@ export class Game {
 
   private gossip(prop: Prop) {
     prop.used = true
+    prop.data = 'spent' // renderer shows it as already-talked
     const city = this.world.city
     const lines = [
       `Trouble in ${this.world.region.name} these days. Guards everywhere.`,
@@ -709,6 +769,7 @@ export class Game {
   grantClue(idx: number) {
     const clue = this.world.clues[idx]
     this.player.clueIndex = idx + 1
+    if (this.profile) this.profile.stats.solves++
     if (this.player.clueIndex >= this.world.clues.length) {
       this.player.hasPass = true
       this.toast('BORDER PASS acquired! Get to the east gate!', 'good')
@@ -806,6 +867,7 @@ export class Game {
       gd.x = wp.x * TS
       gd.y = wp.y * TS
     }
+    this.setPose('sleep', 1.6)
     this.toast(`You slept until morning. Day ${this.day}.`, 'info')
     this.saveMeta()
   }
@@ -828,6 +890,7 @@ export class Game {
       return
     }
     this.climbCooldown = 0.8
+    this.setPose('climb', 0.55)
     // climbing lets you pass through: briefly become non-solid by vaulting over
     const dirx = Math.cos(this.player.facing)
     const diry = Math.sin(this.player.facing)
@@ -846,7 +909,7 @@ export class Game {
     this.toast('Vaulted over.', 'info')
     if (this.rng.chance(0.12)) {
       this.player.coins += 1
-      this.toast('You found a coin on top!', 'good')
+      this.toast('+1 $DLI up top!', 'good')
     }
   }
 
@@ -878,11 +941,59 @@ export class Game {
   // ---- transitions ------------------------------------------------------
 
   private saveMeta() {
-    writeSave({
+    this.checkpoint()
+  }
+
+  /** public: flush right now (used when leaving the game from the HUD) */
+  saveNow() {
+    this.checkpoint()
+  }
+
+  /**
+   * One autosave checkpoint: mid-run survival state + career progress.
+   * Called on city completion, day rollover, sleep, death and every
+   * AUTOSAVE_INTERVAL seconds of live play.
+   */
+  private checkpoint() {
+    const prof = this.profile
+    if (!prof) return
+    const pl = this.player
+    prof.run = {
       city: this.world.city,
-      deaths: this.deaths,
-      totalDays: this.totalDays,
-    })
+      day: this.day,
+      daysInCity: this.daysInCity,
+      hunger: pl.hunger,
+      thirst: pl.thirst,
+      health: pl.health,
+      coins: pl.coins,
+      food: pl.food,
+      water: pl.water,
+      clueIndex: pl.clueIndex,
+    }
+    prof.bestCity = Math.max(prof.bestCity, this.world.city)
+    prof.skin = this.skinId
+    saveProfile(prof)
+  }
+
+  /**
+   * Clearing all 20 cities of a region reveals its lore snippet.
+   * `silent` just records the unlock (used on the final victory city).
+   */
+  private unlockRegionLore(regionIndex: number, silent = false) {
+    const region = REGIONS[regionIndex]
+    if (!region) return
+    const already = this.profile?.lore[region.id] === true
+    if (this.profile) {
+      this.profile.lore[region.id] = true
+      saveProfile(this.profile)
+    }
+    if (silent) return
+    this.toast(`${region.name}: all ${CITIES_PER_REGION} cities cleared. Lore unlocked.`, 'good')
+    this.dialog = {
+      title: already ? `AGAIN — ${region.name}` : `REGION CLEARED — ${region.name}`,
+      lines: [region.lore],
+    }
+    this.status = 'dialog'
   }
 
   restartDay() {
@@ -898,6 +1009,7 @@ export class Game {
       gd.x = wp.x * TS
       gd.y = wp.y * TS
     }
+    this.checkpoint()
   }
 
   restartCity() {
@@ -917,26 +1029,36 @@ export class Game {
       if (p.kind === 'trash') p.used = false
     }
     this.toast(`Back to Day 1 of City ${this.world.city}. Stay alive this time.`, 'bad')
+    this.saveAccum = 0
+    this.checkpoint()
   }
 
   nextCity() {
-    const next = this.world.city + 1
+    const cleared = this.world.city
+    const next = cleared + 1
+    if (this.profile) this.profile.stats.citiesCleared++
+
     if (next > 100) {
+      if (cleared % CITIES_PER_REGION === 0) this.unlockRegionLore(regionIndexForCity(cleared), true)
       this.status = 'victory'
-      writeSave({ city: 100, deaths: this.deaths, totalDays: this.totalDays })
+      this.checkpoint()
       return
     }
-    writeSave({ city: next, deaths: this.deaths, totalDays: this.totalDays })
+
     this.world = generateCity(next)
     this.player = this.makePlayer()
     this.day = 1
     this.daysInCity = 1
     this.timeSec = 0
     this.status = 'playing'
+    this.saveAccum = 0
+    this.checkpoint()
     this.toast(
       `City ${next} — ${this.world.region.name}. ${next === 100 ? 'THE LAST CITY. Almost free!' : 'Find the clue trail.'}`,
       'info',
     )
+    // a full region cleared: hand over its lore snippet
+    if (cleared % CITIES_PER_REGION === 0) this.unlockRegionLore(regionIndexForCity(cleared))
   }
 
   toast(text: string, kind: Toast['kind'] = 'info') {
@@ -989,6 +1111,28 @@ export class Game {
       totalDays: this.totalDays,
       nearSafehouse: this.nearSafehouse,
       guardsAlerted: this.world.guards.filter((g) => g.state === 'chase').length,
+      skin: this.skinId,
+      regionId: this.world.region.id,
+      regionIndex: regionIndexForCity(this.world.city),
+      clueKnown: this.player.clueIndex > 0,
+      clueHint: this.world.clues[Math.min(this.player.clueIndex, this.world.clues.length - 1)]?.riddle ?? '',
+      playerName: this.profile?.name ?? 'Runner',
+      clueTrack: this.clueTrack(),
+    }
+  }
+
+  /** direction + distance to the next clue — opening cities only, first two clues */
+  private clueTrack(): Snapshot['clueTrack'] {
+    if (!clueAssist(this.world.city, this.player.clueIndex)) return null
+    const clue = this.world.clues[this.player.clueIndex]
+    if (!clue || this.player.hasPass) return null
+    const prop = this.world.propAt.get(clue.propId)
+    if (!prop) return null
+    const dx = prop.x - this.player.x
+    const dy = prop.y - this.player.y
+    return {
+      angle: Math.atan2(dy, dx),
+      distanceTiles: Math.round(Math.hypot(dx, dy) / TS),
     }
   }
 }

@@ -1,22 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Game, loadSave, type SaveData } from './game/engine'
+import { BRAND } from './game/brand'
+import { Game } from './game/engine'
+import { freshProfile, loadProfile, resetProfile, saveProfile, storageAvailable, type Profile } from './game/profile'
 import { render } from './game/render'
 import { HUD } from './ui/HUD'
 import { Menus } from './ui/Menus'
+import { Onboarding } from './ui/Onboarding'
 import { TouchControls } from './ui/TouchControls'
+import { WelcomeBack } from './ui/WelcomeBack'
+import { WorldMap } from './ui/WorldMap'
+
+type Screen = 'booting' | 'onboarding' | 'welcome' | 'map' | 'game'
 
 const ENGINE_READY = typeof window !== 'undefined'
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameRef = useRef<Game | null>(null)
+  /** the single live profile object — the engine mutates this same instance */
+  const profileRef = useRef<Profile | null>(null)
   const [, setTick] = useState(0)
-  const [save, setSave] = useState<SaveData | null>(null)
+  const [screen, setScreen] = useState<Screen>('booting')
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [recovered] = useState(() => loadProfile()?.corruptRecovered === true)
+  const [storageOk] = useState(() => (ENGINE_READY ? storageAvailable() : false))
+
+  /* ---------------- boot: load or start a profile ---------------- */
 
   useEffect(() => {
     if (!ENGINE_READY) return
-    setSave(loadSave())
+    const p = loadProfile()
+    profileRef.current = p
+    setProfile(p ? { ...p } : null)
+    setScreen(p?.onboarded ? 'welcome' : 'onboarding')
   }, [])
+
+  /** mutate the live profile, persist it, and refresh the UI copy */
+  const persist = useCallback((patch: Partial<Profile>) => {
+    const live = profileRef.current
+    if (!live) return
+    Object.assign(live, patch)
+    saveProfile(live)
+    setProfile({ ...live })
+  }, [])
+
+  /* ---------------- canvas + render loop ---------------- */
 
   useEffect(() => {
     if (!ENGINE_READY) return
@@ -43,6 +71,9 @@ export default function App() {
         const dpr = Math.min(2, window.devicePixelRatio || 1)
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         render(ctx, g, canvas.clientWidth, canvas.clientHeight)
+      } else {
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
       }
       raf = requestAnimationFrame(loop)
     }
@@ -50,15 +81,17 @@ export default function App() {
 
     return () => {
       window.removeEventListener('resize', resize)
+      window.visualViewport?.removeEventListener('resize', resize)
       cancelAnimationFrame(raf)
     }
   }, [])
 
+  /* ---------------- keyboard ---------------- */
+
   useEffect(() => {
     if (!ENGINE_READY) return
     const isTypingTarget = (t: EventTarget | null) =>
-      t instanceof HTMLElement &&
-      (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
 
     const down = (e: KeyboardEvent) => {
       const g = gameRef.current
@@ -70,7 +103,9 @@ export default function App() {
         if (e.code === 'Enter' && g.status === 'dialog') g.closeDialog()
         return
       }
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code))
+      if (
+        ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)
+      )
         e.preventDefault()
       if (e.code === 'KeyE') g.action('interact')
       else if (e.code === 'Space') g.action('climb')
@@ -91,71 +126,128 @@ export default function App() {
     }
   }, [])
 
-  const subscribeTick = useCallback(() => {
-    const g = gameRef.current
-    if (!g) return () => {}
-    return g.subscribe(() => setTick((t) => t + 1))
+  /* ---------------- engine <-> UI plumbing ---------------- */
+
+  const unsubscribe = useRef<(() => void) | null>(null)
+
+  const mountGame = useCallback(
+    (g: Game) => {
+      unsubscribe.current?.()
+      ;(window as unknown as { game?: Game }).game = g
+      gameRef.current = g
+      g.start()
+      unsubscribe.current = g.subscribe(() => setTick((t) => t + 1))
+      setTick((t) => t + 1)
+    },
+    [],
+  )
+
+  const launch = useCallback(
+    (city: number, fresh = false) => {
+      const prof = profileRef.current
+      if (!prof) return
+      const target = Math.max(1, Math.min(100, Math.round(city)))
+      const resume = !fresh && prof.run && prof.run.city === target ? prof.run : null
+      const g = new Game(target, prof.stats.deaths, 0, { skinId: prof.skin, profile: prof, resume })
+      mountGame(g)
+      setScreen('game')
+    },
+    [mountGame],
+  )
+
+  const backToMenu = useCallback(() => {
+    gameRef.current?.saveNow()
+    unsubscribe.current?.()
+    unsubscribe.current = null
+    gameRef.current = null
+    const live = profileRef.current
+    setProfile(live ? { ...live } : null)
+    setScreen('welcome')
   }, [])
-
-  const startNew = () => {
-    const g = new Game(1)
-    ;(window as unknown as { game?: Game }).game = g
-    gameRef.current = g
-    g.start()
-    setTick((t) => t + 1)
-  }
-
-  const continueGame = () => {
-    const s = loadSave()
-    if (!s) return
-    const g = new Game(Math.max(1, Math.min(100, s.city)), s.deaths, s.totalDays)
-    ;(window as unknown as { game?: Game }).game = g
-    gameRef.current = g
-    g.start()
-    setTick((t) => t + 1)
-  }
 
   const snap = gameRef.current?.getSnapshot()
   const g = gameRef.current
 
-  const unsubRef = useRef<(() => void) | null>(null)
-  useEffect(() => {
-    if (g && !unsubRef.current) {
-      unsubRef.current = subscribeTick()
-    }
-    return () => {
-      unsubRef.current?.()
-      unsubRef.current = null
-    }
-  }, [g, subscribeTick])
+  /* ---------------- screens ---------------- */
 
   return (
     <div className="app">
-      <canvas ref={canvasRef} className="game-canvas" />
-      {g && snap && <HUD snap={snap} />}
-      {g && snap && <TouchControls game={g} snap={snap} />}
-      {g && snap && (
-        <Menus
-          snap={snap}
-          save={save}
-          gameRef={gameRef}
-          onNew={startNew}
-          onContinue={continueGame}
+      {/* canvas stays mounted so the render loop is never torn down */}
+      <canvas ref={canvasRef} className={`game-canvas${screen === 'game' ? '' : ' idle'}`} />
+
+      {screen === 'game' && g && snap && (
+        <>
+          <HUD snap={snap} />
+          <TouchControls game={g} snap={snap} />
+          <Menus snap={snap} gameRef={gameRef} onNew={() => launch(1, true)} />
+          <button className="exit-chip" onClick={backToMenu} title="Save and return to menu">
+            ⌂ menu
+          </button>
+        </>
+      )}
+
+      {screen === 'onboarding' && (
+        <Onboarding
+          recovered={recovered}
+          storageOk={storageOk}
+          initialSkin={profile?.skin}
+          onStart={(name, skin) => {
+            const existing = profileRef.current
+            const p = freshProfile(name, skin)
+            p.onboarded = true
+            p.run = null
+            if (existing) {
+              // keep the career, just rename / reskin
+              p.bestCity = existing.bestCity
+              p.stats = existing.stats
+              p.lore = existing.lore
+              p.createdAt = existing.createdAt
+            }
+            profileRef.current = p
+            persist({})
+            launch(1, true)
+          }}
         />
       )}
-      {!g && (
-        <div className="title-holder">
-          <h1>BORDER RUN</h1>
-          <p className="tagline">100 cities. One stickman. Get out of the country.</p>
-          <div className="menu-buttons">
-            <button onClick={startNew}>New Run</button>
-            <button disabled={!save} onClick={continueGame}>
-              {save ? `Continue — City ${save.city}` : 'No Save'}
-            </button>
+
+      {screen === 'welcome' && profile && (
+        <WelcomeBack
+          profile={profile}
+          storageOk={storageOk}
+          onContinue={() => launch(profile.run?.city ?? profile.bestCity, false)}
+          onOpenMap={() => setScreen('map')}
+          onNewRun={() => launch(profile.bestCity, true)}
+          onChangeSkin={(skin) => persist({ skin })}
+          onReset={() => {
+            resetProfile()
+            profileRef.current = null
+            setProfile(null)
+            setScreen('onboarding')
+          }}
+        />
+      )}
+
+      {screen === 'map' && profile && (
+        <WorldMap
+          profile={profile}
+          onClose={() => setScreen('welcome')}
+          onStartCity={(city) => launch(city, false)}
+        />
+      )}
+
+      {screen === 'booting' && (
+        <div className="screen">
+          <div className="screen-inner">
+            <h1 className="game-title">{BRAND.game}</h1>
+            <p className="tagline">loading the grid…</p>
           </div>
-          <p className="controls-hint">
-            WASD move · Shift run · E interact · Space climb · H hide · F eat · G drink · T sleep
-          </p>
+        </div>
+      )}
+
+      {screen !== 'game' && (
+        <div className="ambient" aria-hidden="true">
+          <span className="ambient-glow one" />
+          <span className="ambient-glow two" />
         </div>
       )}
     </div>

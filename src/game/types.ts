@@ -3,6 +3,8 @@ export interface Vec {
   y: number
 }
 
+export type CharacterPose = 'idle' | 'run' | 'crouch' | 'climb' | 'sleep' | 'interact'
+
 export type TileKind =
   | 'road'
   | 'sidewalk'
@@ -78,12 +80,22 @@ export interface Guard {
 }
 
 export interface Region {
+  /** stable key, used for lore unlock + profile storage */
+  id: string
   name: string
+  /** one-line hook shown on the world map */
+  hook: string
+  /** longer flavor text, revealed once all 20 cities here are cleared */
+  lore: string
   grass: string
   road: string
   building: string
   buildingAlt: string
   accent: string
+  /** primary neon (magenta family) */
+  neon: string
+  /** secondary neon (cyan family) */
+  neon2: string
 }
 
 export interface World {
@@ -123,6 +135,10 @@ export interface PlayerState {
   anim: number
   moving: boolean
   running: boolean
+  /** animation state handed to the character renderer */
+  pose: CharacterPose
+  /** seconds left on a transient pose (climb / sleep / interact) */
+  poseTimer: number
 }
 
 export type GameStatus =

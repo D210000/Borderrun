@@ -1,15 +1,14 @@
 import { useRef, useState } from 'react'
-import type { Game, SaveData, Snapshot } from '../game/engine'
+import { BRAND } from '../game/brand'
+import type { Game, Snapshot } from '../game/engine'
 
 interface MenusProps {
   snap: Snapshot
-  save: SaveData | null
   gameRef: React.RefObject<Game | null>
   onNew: () => void
-  onContinue: () => void
 }
 
-export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
+export function Menus({ snap, gameRef, onNew }: MenusProps) {
   const g = gameRef.current!
   const [wordAnswer, setWordAnswer] = useState('')
   const [codeAnswer, setCodeAnswer] = useState('')
@@ -17,17 +16,20 @@ export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
   const wordRef = useRef<HTMLInputElement>(null)
   const codeRef = useRef<HTMLInputElement>(null)
   // After a wrong answer the puzzle stays open; put the caret back so typing keeps working
-  const refocus = (r: React.RefObject<HTMLInputElement | null>) =>
-    setTimeout(() => r.current?.focus(), 0)
+  const refocus = (r: React.RefObject<HTMLInputElement | null>) => setTimeout(() => r.current?.focus(), 0)
 
   if (snap.status === 'dialog' && snap.dialog) {
+    const isRegionLore = snap.dialog.title.startsWith('REGION CLEARED') || snap.dialog.title.startsWith('AGAIN')
     return (
-      <div className="overlay">
+      <div className={`overlay${isRegionLore ? ' lore' : ''}`}>
         <div className="panel">
           <h2>{snap.dialog.title}</h2>
           {snap.dialog.lines.map((l, i) => (
-            <p key={i}>{l}</p>
+            <p key={i} className={isRegionLore ? 'lore-text' : undefined}>
+              {l}
+            </p>
           ))}
+          {isRegionLore && <p className="hint">Region file added to the world map.</p>}
           <button className="primary" onClick={() => g.closeDialog()}>
             Continue (Enter)
           </button>
@@ -41,7 +43,7 @@ export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
     return (
       <div className="overlay">
         <div className="panel">
-          <h2>🧩 Puzzle Lock</h2>
+          <h2>🔓 Signal Lock</h2>
           {pz.kind === 'word' && (
             <>
               <p className="puzzle-body">{pz.scrambled}</p>
@@ -152,7 +154,7 @@ export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
         <div className="panel">
           <h2>💀 COLLAPSED</h2>
           <p>{snap.deathReason || 'Your body gave out.'}</p>
-          <p className="hint">Retrying City {snap.city} from Day 1...</p>
+          <p className="hint">Restarting City {snap.city} from Day 1...</p>
         </div>
       </div>
     )
@@ -162,13 +164,13 @@ export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
     return (
       <div className="overlay gold">
         <div className="panel">
-          <h2>🎉 CITY {snap.city} CLEARED!</h2>
+          <h2>✔ CITY {snap.city} CLEARED</h2>
           <p>
             {snap.city === 100
               ? 'The last gate... beyond it, freedom.'
               : `Crossing into City ${snap.city + 1}...`}
           </p>
-          <p className="hint">Days wasted here: {snap.daysInCity}</p>
+          <p className="hint">Days spent here: {snap.daysInCity}</p>
         </div>
       </div>
     )
@@ -178,27 +180,15 @@ export function Menus({ snap, gameRef, onNew, onContinue }: MenusProps) {
     return (
       <div className="overlay gold">
         <div className="panel">
-          <h2>🌍 FREEDOM!</h2>
-          <p>You crossed all 100 cities and left the country!</p>
+          <h2>🌍 OUT OF THE COUNTRY</h2>
+          <p>
+            {snap.playerName} crossed all 100 cities of {BRAND.game} {BRAND.gameLine2} and left the country.
+          </p>
           <p className="hint">
-            Total days on the road: {snap.totalDays} · Close calls: {snap.deaths}
+            Days on the road: {snap.totalDays} · Close calls: {snap.deaths}
           </p>
           <button className="primary" onClick={onNew}>
-            New Run
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (snap.status === 'briefing' || snap.status === 'title') {
-    return (
-      <div className="overlay">
-        <div className="panel">
-          <h1>BORDER RUN</h1>
-          <p>City {snap.city} of 100 — {snap.region}</p>
-          <button className="primary" onClick={onContinue}>
-            Begin
+            Run it again
           </button>
         </div>
       </div>

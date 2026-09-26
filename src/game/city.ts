@@ -12,30 +12,125 @@ import type {
 
 export const TS = 32 // tile size in px
 
+/**
+ * 5 regions x 20 cities = the 100 cities of the run.
+ * Dark "digital underworld" palettes: near-black ground, magenta + cyan neon.
+ * PLACEHOLDER: `hook` / `lore` are temp copy — swap in the real Dlicom text.
+ */
+export const CITIES_PER_REGION = 20
+
 export const REGIONS: Region[] = [
-  { name: 'Farmlands', grass: '#7aa653', road: '#8d8677', building: '#b08954', buildingAlt: '#9c7546', accent: '#e2c069' },
-  { name: 'Riverlands', grass: '#6fa06a', road: '#7f8a8c', building: '#7ba3b5', buildingAlt: '#6a8fa0', accent: '#9fd6d2' },
-  { name: 'Greenfields', grass: '#63a862', road: '#8d8677', building: '#a3b06b', buildingAlt: '#8f9c5c', accent: '#d7e28a' },
-  { name: 'Suburbs', grass: '#8a9a5b', road: '#9a938c', building: '#c8b592', buildingAlt: '#b3a17f', accent: '#e8d9a0' },
-  { name: 'Old Town', grass: '#7d9a6a', road: '#a09a92', building: '#c99a6e', buildingAlt: '#b3875c', accent: '#e6b877' },
-  { name: 'Downtown', grass: '#6f9a6f', road: '#6f6f74', building: '#8f96a8', buildingAlt: '#7d8496', accent: '#9fb6d9' },
-  { name: 'Harbor', grass: '#6d9d86', road: '#7d828a', building: '#7fa0ad', buildingAlt: '#6b8c99', accent: '#8fd0c5' },
-  { name: 'Industrial', grass: '#7d8f6a', road: '#75726c', building: '#9c9186', buildingAlt: '#8a7f74', accent: '#d9a05b' },
-  { name: 'Highlands', grass: '#7f9a7d', road: '#93837b', building: '#a89a8c', buildingAlt: '#94867a', accent: '#cfd8c2' },
-  { name: 'Borderlands', grass: '#8f9a6a', road: '#8a7f70', building: '#b5975f', buildingAlt: '#9d8050', accent: '#e0c25a' },
+  {
+    id: 'fringe',
+    name: 'Fringe Sector',
+    hook: 'Where the wire starts. Cheap fences, cheaper informants.',
+    lore: 'PLACEHOLDER LORE — The Fringe was the country\'s first server farm, then its first slum. The grid still hums under the asphalt, and the people who stayed learned to speak in static.',
+    grass: '#0e0a1a',
+    road: '#1d1735',
+    building: '#271d47',
+    buildingAlt: '#1a1433',
+    accent: '#ff2fa0',
+    neon: '#ff2fa0',
+    neon2: '#28e6ff',
+  },
+  {
+    id: 'rustwater',
+    name: 'Rustwater',
+    hook: 'Flooded docks. Everything here is wet, lit, and watching.',
+    lore: 'PLACEHOLDER LORE — Rustwater drowned twice and kept trading anyway. Barges run on stolen current, and every canal is a shortcut for someone who does not want to be seen.',
+    grass: '#06140f',
+    road: '#12222a',
+    building: '#173540',
+    buildingAlt: '#102630',
+    accent: '#28e6ff',
+    neon: '#2bffd0',
+    neon2: '#ff2fa0',
+  },
+  {
+    id: 'glassgrid',
+    name: 'Glassgrid',
+    hook: 'Downtown. Towers, cameras, and no cheap way out.',
+    lore: 'PLACEHOLDER LORE — The Grid sold its skyline to whoever could pay in light. Guards here wear visors tuned to pick a heartbeat out of a crowd.',
+    grass: '#0a0a1e',
+    road: '#1c1b36',
+    building: '#2a2452',
+    buildingAlt: '#1f1c3d',
+    accent: '#b06bff',
+    neon: '#b06bff',
+    neon2: '#28e6ff',
+  },
+  {
+    id: 'halcyon',
+    name: 'Halcyon Heights',
+    hook: 'Cold air, clean streets, a checkpoint every block.',
+    lore: 'PLACEHOLDER LORE — Halcyon was built as the escape hatch for people who never had to run. The road out of it is the only one that never closes — it just costs everything.',
+    grass: '#08101c',
+    road: '#17222f',
+    building: '#22323f',
+    buildingAlt: '#1a2734',
+    accent: '#28e6ff',
+    neon: '#28e6ff',
+    neon2: '#ff8acb',
+  },
+  {
+    id: 'lockdown',
+    name: 'Lockdown Borderlands',
+    hook: 'The last 20. Past the fence is another country.',
+    lore: 'PLACEHOLDER LORE — The Borderlands are not a place so much as a countdown. The lights are red on purpose: they want you to see the finish and know you probably will not reach it.',
+    grass: '#15080e',
+    road: '#2b1420',
+    building: '#3d1c2e',
+    buildingAlt: '#2c1322',
+    accent: '#ff2f5e',
+    neon: '#ff2f5e',
+    neon2: '#ffd24a',
+  },
 ]
+
+export function regionIndexForCity(city: number): number {
+  return Math.min(REGIONS.length - 1, Math.max(0, Math.floor((city - 1) / CITIES_PER_REGION)))
+}
+
+export function regionForCity(city: number): Region {
+  return REGIONS[regionIndexForCity(city)]
+}
 
 // Scaling curve helpers -------------------------------------------------
 
+// every city is a little bigger than the last: 38x30 out of the gate, 84x66 by the border
 function mapSize(city: number): { w: number; h: number } {
-  const w = Math.min(64, 38 + Math.floor(city / 8) * 2)
-  const h = Math.min(64, 30 + Math.floor(city / 10) * 2)
+  const w = Math.min(84, Math.round(38 + (city - 1) * 0.46))
+  const h = Math.min(66, Math.round(30 + (city - 1) * 0.36))
   return { w, h }
 }
 
-// 2 -> 5 clue links across 100 cities
+// 2 clue links at City 1, growing to 9 by the end of the run
 function clueCount(city: number): number {
-  return Math.min(5, 2 + Math.floor((city - 1) / 25))
+  return Math.min(9, 2 + Math.floor((city - 1) / 12))
+}
+
+/**
+ * The opening-levels hand-hold. Only the first two clues of a chain, and only in
+ * the first few cities, get pointed at: close-together landmarks, a direction and
+ * distance in the riddle, the tracker arrow, and hint rings. Everything after
+ * that has to be found from the riddle alone.
+ */
+export const CLUE_ASSIST_MAX_CITY = 5
+export const CLUE_ASSIST_CLUES = 2
+
+export function clueAssist(city: number, clueIndex: number): boolean {
+  return city <= CLUE_ASSIST_MAX_CITY && clueIndex < CLUE_ASSIST_CLUES
+}
+
+/** "4 blocks north-east" — the early-game hand-hold */
+function describeDirection(from: Vec, to: Vec): string {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const blocks = Math.max(1, Math.round(Math.hypot(dx, dy)))
+  const ew = Math.abs(dx) < 3 ? '' : dx > 0 ? 'east' : 'west'
+  const ns = Math.abs(dy) < 3 ? '' : dy > 0 ? 'south' : 'north'
+  const dir = ns && ew ? `${ns}-${ew}` : ns || ew || 'nearby'
+  return `${blocks} block${blocks === 1 ? '' : 's'} ${dir}`
 }
 
 // More guards, wider cones, faster later
@@ -51,12 +146,12 @@ const RIDDLES: Array<(next: string, gate: string) => string> = [
   (n) => `The next word waits where ${n}.`,
   (n) => `Ask ${n} — they saw the courier pass.`,
   (n) => `Rumor says the stamp hides near ${n}.`,
-  (n, g) => `Follow the chain: ${n}... and when the chain ends, the gate (${g}) opens.`,
+  (n, g) => `Follow the chain: ${n}... and when the chain ends, ${g} opens.`,
 ]
 
 export function generateCity(city: number): World {
   const rng = new RNG(city * 7919 + 13)
-  const region = REGIONS[Math.min(REGIONS.length - 1, Math.floor((city - 1) / 10))]
+  const region = regionForCity(city)
   const { w, h } = mapSize(city)
   const tiles: TileKind[] = new Array(w * h).fill('grass' as TileKind)
   const idx = (x: number, y: number) => y * w + x
@@ -204,28 +299,29 @@ export function generateCity(city: number): World {
     const s = takeSpot()
     addProp('house', s.x, s.y, { data: rng.chance(0.6) ? 'food' : 'water', blocking: false })
   }
-  for (let i = 0; i < 3 + Math.floor(city / 15); i++) {
+  // clue-capable landmarks scale with the city, since later cities chain more clues
+  for (let i = 0; i < 3 + Math.floor(city / 12); i++) {
     const s = takeSpot()
     addProp('bar', s.x, s.y)
   }
-  for (let i = 0; i < 2 + Math.floor(city / 30); i++) {
+  for (let i = 0; i < 3 + Math.floor(city / 12); i++) {
     const s = takeSpot()
     addProp('board', s.x, s.y)
   }
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3 + Math.floor(city / 25); i++) {
     const s = takeSpot()
     addProp('kid', s.x, s.y, { blocking: false })
   }
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3 + Math.floor(city / 25); i++) {
     const s = takeSpot()
     addProp('radio', s.x, s.y)
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4 + Math.floor(city / 20); i++) {
     const s = takeSpot()
     addProp('graffiti', s.x, s.y, { blocking: false })
   }
   // safehouse benches in quiet corners
-  for (let i = 0; i < 3 + Math.floor(city / 20); i++) {
+  for (let i = 0; i < 4 + Math.floor(city / 15); i++) {
     const s = takeSpot()
     addProp('bench', s.x, s.y, { blocking: false, data: 'sleep' })
   }
@@ -264,8 +360,11 @@ export function generateCity(city: number): World {
     candidates.sort(
       (a, b) => (a.x - prev.x) ** 2 + (a.y - prev.y) ** 2 - ((b.x - prev.x) ** 2 + (b.y - prev.y) ** 2),
     )
-    // pick among the 3 nearest to add variety
-    const chosen = candidates[rng.int(0, Math.min(2, candidates.length - 1))]
+    // the assisted opening clues sit right next to the last one; everything after
+    // is picked from the nearest few, so the chain scatters across the city
+    const chosen = clueAssist(city, i)
+      ? candidates[0]
+      : candidates[rng.int(0, Math.min(3, candidates.length - 1))]
     used.add(chosen.id)
     chosen.data = 'clue'
     clues.push({
@@ -277,18 +376,16 @@ export function generateCity(city: number): World {
     })
   }
 
-  // riddles point to the next clue's landmark; final one points to the gate
+  // riddles point to the next clue's landmark; final one points to the gate.
+  // Only the assisted opening clues say which way and how far.
   const gateName = 'the border gate'
   for (let i = 0; i < clues.length; i++) {
-    const next =
-      i + 1 < clues.length
-        ? `the ${props.find((p) => p.id === clues[i + 1].propId)!.kind} by the ${
-            getTile(Math.floor(clues[i + 1].x / TS), Math.floor(clues[i + 1].y / TS)) === 'park'
-              ? 'park'
-              : 'street'
-          }`
-        : gateName
-    clues[i].riddle = rng.pick(RIDDLES)(next, gateName)
+    const from: Vec = i === 0 ? spawn : { x: clues[i - 1].x / TS, y: clues[i - 1].y / TS }
+    const nextClue = i + 1 < clues.length ? clues[i + 1] : null
+    const kind = nextClue ? props.find((p) => p.id === nextClue.propId)!.kind : 'border gate'
+    const target: Vec = nextClue ? { x: nextClue.x / TS, y: nextClue.y / TS } : { x: w - 1, y: gateY + 0.5 }
+    const landmark = clueAssist(city, i + 1) ? `the ${kind} (${describeDirection(from, target)})` : `the ${kind}`
+    clues[i].riddle = rng.pick(RIDDLES)(landmark, gateName)
   }
 
   // puzzles start appearing from city 4, one per extra clue
