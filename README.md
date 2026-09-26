@@ -1,4 +1,4 @@
-# 🏃 DILIMAZE CITIES
+# DILIMAZE CITIES
 
 _100 cities. One hero. Get out of the country._  
 A Dlicom game.
@@ -7,7 +7,7 @@ A top-down puzzle-survival game: you guide the **Dlicom mascot** across a countr
 between you and the border. Clear one city, move to the next — each one harder than the last.
 Find clues, solve puzzles, eat, drink, sleep... and stay out of the guard's sight.
 
-**▶ Play now: [https://d210000.github.io/Borderrun/](https://d210000.github.io/Borderrun/)**
+**▶ Play now: [DILIMAZE CITIES](https://d210000.github.io/DILIMAZE/)**
 
 ## How to play
 
@@ -137,23 +137,8 @@ npm run dev
 
 Then open http://localhost:5180/.
 
-## Rebuilding the sprite from a screenshot
-
-A pasted mascot image can be converted into the game-ready sprite (crop → drop the backdrop →
-integer downscale) with the included tool:
-
-```bash
-powershell -NoProfile -File scripts/make-sprite.ps1 -In <paste.png> -Out src/assets/dlicom.png -TargetH 38
-```
-
-The source image needs no transparency — it flood-fills the dark backdrop from the border, so
-dark pixels *inside* the character (eyes, outlines) are kept. Requires Windows PowerShell (it
-uses the .NET PNG decoder).
-
 ## Tech
 
 Vite + React + TypeScript, canvas rendering, zero game-engine dependencies. No image assets are
 fetched at runtime — the one PNG is imported through Vite so it works under the GitHub Pages
 subpath.
-The game deploys to GitHub Pages automatically on every push to `main`
-(see `.github/workflows/deploy.yml`).
