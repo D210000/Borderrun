@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:pages": "tsc --noEmit && vite build --base=/Borderrun/",
+    "build:pages": "tsc --noEmit && vite build --base=/DILIMAZE/",
     "preview": "vite preview"
   },
   "dependencies": {
