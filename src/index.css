@@ -18,8 +18,18 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'The Bomb Sound';
+  src: url('./assets/the-bomb-sound.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --font-display: 'Youre Gone', 'Segoe UI', system-ui, sans-serif;
+  /* popup/dialog text face */
+  --font-popup: 'The Bomb Sound', 'Segoe UI', system-ui, sans-serif;
   --void: #05030b;
   --bg: #08060f;
   --panel: #120c1f;
@@ -880,6 +890,80 @@ button.wide {
   opacity: 1;
 }
 
+/* ---------- overlays (popup text) ---------- */
+
+/* The Bomb Sound face for popup / dialog text */
+.overlay .panel h2,
+.overlay .panel p,
+.overlay .panel .hint,
+.overlay .panel .puzzle-body,
+.overlay .panel .seq-progress,
+.overlay .panel button {
+  font-family: var(--font-popup);
+}
+
+.overlay .panel {
+  border: 1px solid rgba(255, 47, 160, 0.45);
+  border-radius: 16px;
+  box-shadow: 0 0 40px rgba(255, 47, 160, 0.18), 0 18px 60px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(38, 20, 66, 0.98), rgba(16, 9, 30, 0.98));
+  padding: 26px 30px;
+  position: relative;
+}
+
+.overlay .panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.7;
+}
+
+.overlay .panel h2 {
+  letter-spacing: 2px;
+  font-size: 26px;
+  margin-bottom: 12px;
+  color: var(--magenta-soft);
+  text-shadow: 0 0 14px rgba(255, 47, 160, 0.5);
+}
+
+.overlay .panel p {
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.overlay .panel .hint {
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+.overlay .panel .puzzle-body {
+  font-size: 26px;
+  letter-spacing: 4px;
+}
+
+.overlay .panel button {
+  font-size: 14px;
+  padding: 10px 22px;
+  border-radius: 10px;
+}
+
+.overlay.lore .panel::before {
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
+.overlay.red .panel::before {
+  background: linear-gradient(90deg, transparent, var(--bad), transparent);
+}
+
+.overlay.gold .panel::before {
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
 /* ---------- overlays ---------- */
 
 .overlay {
@@ -1066,6 +1150,29 @@ button.wide {
 
   .panel p {
     font-size: 13px;
+  }
+
+  .overlay .panel {
+    padding: 20px 18px;
+    border-radius: 12px;
+  }
+
+  .overlay .panel h2 {
+    font-size: 21px;
+    margin-bottom: 10px;
+  }
+
+  .overlay .panel p {
+    font-size: 15px;
+  }
+
+  .overlay .panel .hint {
+    font-size: 13px;
+  }
+
+  .overlay .panel .puzzle-body {
+    font-size: 20px !important;
+    letter-spacing: 3px;
   }
 
   .puzzle-body {

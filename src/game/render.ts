@@ -175,18 +175,23 @@ function drawTiles(
       ctx.fillRect(x * TS, y * TS, TS, TS)
 
       if (tile === 'building') {
-        ctx.fillStyle = 'rgba(0,0,0,0.5)'
+        ctx.fillStyle = 'rgba(0,0,0,0.28)'
         ctx.fillRect(x * TS, y * TS, TS, TS)
         // lit windows, deterministic per tile
         const seed = (x * 73856093) ^ (y * 19349663)
         const lit = Math.abs(seed) % 5
-        if (lit < 2) {
-          ctx.fillStyle = lit === 0 ? withAlpha(r.neon, 0.4) : withAlpha(r.neon2, 0.32)
-          ctx.fillRect(x * TS + 7, y * TS + 9, 5, 5)
-          ctx.fillRect(x * TS + 19, y * TS + 18, 5, 5)
+        if (lit < 3) {
+          const count = lit < 1 ? 3 : 2
+          ctx.fillStyle = withAlpha(r.neon, 0.6)
+          ctx.fillRect(x * TS + 6, y * TS + 8, 5, 5)
+          ctx.fillRect(x * TS + 17, y * TS + 19, 5, 5)
+          if (count === 3) ctx.fillRect(x * TS + 23, y * TS + 8, 5, 5)
+          ctx.fillStyle = withAlpha(r.neon2, 0.5)
+          ctx.fillRect(x * TS + 14, y * TS + 8, 5, 5)
+          ctx.fillRect(x * TS + 7, y * TS + 19, 5, 5)
         }
-        ctx.strokeStyle = withAlpha(r.neon2, 0.14)
-        ctx.lineWidth = 1
+        ctx.strokeStyle = withAlpha(r.neon2, 0.28)
+        ctx.lineWidth = 1.2
         ctx.strokeRect(x * TS + 0.5, y * TS + 0.5, TS - 1, TS - 1)
       } else if (tile === 'road') {
         // dashed neon lane marking on vertical roads
@@ -262,50 +267,54 @@ function drawProp(ctx: CanvasRenderingContext2D, pr: Prop, world: World) {
 
   switch (pr.kind) {
     case 'tree':
-      ctx.fillStyle = '#120c22'
+      ctx.fillStyle = '#2a2140'
       ctx.fillRect(x - 2, y - 2, 4, 10)
-      ctx.fillStyle = darken(r.grass, 26)
+      ctx.fillStyle = darken(r.grass, 16)
       ctx.beginPath()
       ctx.arc(x, y - 7, 9, 0, Math.PI * 2)
       ctx.fill()
-      ctx.strokeStyle = withAlpha(r.neon2, 0.3)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(r.neon2, 0.5)
+      ctx.lineWidth = 1.2
       ctx.stroke()
       break
     case 'bush':
-      ctx.fillStyle = pr.used ? darken(r.grass, 14) : darken(r.grass, 30)
+      ctx.fillStyle = pr.used ? darken(r.grass, 4) : darken(r.grass, 16)
       ctx.beginPath()
       ctx.arc(x, y, 9, 0, Math.PI * 2)
       ctx.fill()
-      ctx.strokeStyle = withAlpha(r.neon, 0.28)
+      ctx.strokeStyle = withAlpha(r.neon, 0.5)
+      ctx.lineWidth = 1.2
       ctx.stroke()
       break
     case 'bench':
-      ctx.fillStyle = pr.data === 'sleep' ? '#4a2c56' : '#2c2338'
+      ctx.fillStyle = pr.data === 'sleep' ? '#6b3a7e' : '#4a3a5e'
       ctx.fillRect(x - 10, y - 4, 20, 6)
-      ctx.fillStyle = pr.data === 'sleep' ? r.neon : '#3d3350'
+      ctx.fillStyle = pr.data === 'sleep' ? r.neon : '#5a4a70'
       ctx.fillRect(x - 10, y - 6, 20, 2)
       break
     case 'fountain':
-      ctx.fillStyle = '#1b2b3a'
+      ctx.fillStyle = '#2c4a66'
       ctx.beginPath()
       ctx.arc(x, y, 12, 0, Math.PI * 2)
       ctx.fill()
+      ctx.strokeStyle = withAlpha(C.cyan, 0.5)
+      ctx.lineWidth = 1.5
+      ctx.stroke()
       ctx.fillStyle = C.cyan
       ctx.beginPath()
       ctx.arc(x, y, 7, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillStyle = 'rgba(255,255,255,0.7)'
       ctx.beginPath()
-      ctx.arc(x - 2, y - 2, 2.4, 0, Math.PI * 2)
+      ctx.arc(x - 2, y - 2, 2.6, 0, Math.PI * 2)
       ctx.fill()
       break
     case 'crate': {
-      ctx.fillStyle = '#3a2a4a'
+      ctx.fillStyle = '#5a3f6e'
       ctx.fillRect(x - 10, y - 10, 20, 20)
       ctx.strokeStyle = r.neon
+      ctx.lineWidth = 1.5
       ctx.strokeRect(x - 10, y - 10, 20, 20)
-      ctx.lineWidth = 1
       ctx.beginPath()
       ctx.moveTo(x - 10, y - 10)
       ctx.lineTo(x + 10, y + 10)
@@ -315,8 +324,8 @@ function drawProp(ctx: CanvasRenderingContext2D, pr: Prop, world: World) {
       break
     }
     case 'fence':
-      ctx.strokeStyle = '#4a4468'
-      ctx.lineWidth = 1.4
+      ctx.strokeStyle = '#6a5f8a'
+      ctx.lineWidth = 1.8
       for (let i = -2; i <= 2; i++) {
         ctx.beginPath()
         ctx.moveTo(x + i * 5, y - 8)
@@ -331,18 +340,19 @@ function drawProp(ctx: CanvasRenderingContext2D, pr: Prop, world: World) {
       ctx.stroke()
       break
     case 'dumpster':
-      ctx.fillStyle = '#1c3a34'
+      ctx.fillStyle = '#2f6a5e'
       ctx.fillRect(x - 11, y - 8, 22, 16)
-      ctx.fillStyle = '#123028'
+      ctx.fillStyle = '#3a8070'
       ctx.fillRect(x - 11, y - 8, 22, 5)
-      ctx.strokeStyle = withAlpha(C.cyan, 0.35)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(C.cyan, 0.6)
+      ctx.lineWidth = 1.5
       ctx.strokeRect(x - 11, y - 8, 22, 16)
       break
     case 'trash':
-      ctx.fillStyle = '#2a2640'
+      ctx.fillStyle = '#4a3f6a'
       ctx.fillRect(x - 5, y - 7, 10, 13)
-      ctx.strokeStyle = withAlpha(C.cyan, 0.3)
+      ctx.strokeStyle = withAlpha(C.cyan, 0.5)
+      ctx.lineWidth = 1.2
       ctx.strokeRect(x - 5, y - 7, 10, 13)
       break
     case 'coin': {
@@ -366,10 +376,10 @@ function drawProp(ctx: CanvasRenderingContext2D, pr: Prop, world: World) {
     case 'stall':
       ctx.fillStyle = r.neon
       ctx.fillRect(x - 12, y - 12, 24, 9)
-      ctx.fillStyle = '#2a2240'
+      ctx.fillStyle = '#463a6a'
       ctx.fillRect(x - 10, y - 3, 20, 9)
-      ctx.strokeStyle = withAlpha(C.cyan, 0.4)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(C.cyan, 0.55)
+      ctx.lineWidth = 1.5
       ctx.strokeRect(x - 12, y - 12, 24, 18)
       break
     case 'shop':
@@ -382,14 +392,18 @@ function drawProp(ctx: CanvasRenderingContext2D, pr: Prop, world: World) {
       drawClueProp(ctx, pr, r)
       break
     case 'waterTower':
-      ctx.fillStyle = '#4a4468'
+      ctx.fillStyle = '#6a5f8a'
       ctx.fillRect(x - 12, y - 20, 4, 30)
       ctx.fillRect(x + 8, y - 20, 4, 30)
-      ctx.fillStyle = '#5c5578'
+      ctx.fillStyle = '#7d72a0'
       ctx.fillRect(x - 14, y - 26, 28, 12)
-      ctx.strokeStyle = withAlpha(C.cyan, 0.5)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(C.cyan, 0.6)
+      ctx.lineWidth = 1.5
       ctx.strokeRect(x - 14, y - 26, 28, 12)
+      ctx.fillStyle = withAlpha(C.cyan, 0.5)
+      ctx.fillRect(x - 7, y - 22, 2, 4)
+      ctx.fillRect(x - 1, y - 22, 2, 4)
+      ctx.fillRect(x + 5, y - 22, 2, 4)
       break
   }
   ctx.restore()
@@ -462,12 +476,12 @@ function drawPropBadges(ctx: CanvasRenderingContext2D, pr: Prop, m: PropMarks) {
 /** a searched bin: lid flipped open, nothing inside */
 function drawEmptyBin(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.save()
-  ctx.fillStyle = '#161327'
+  ctx.fillStyle = '#3a3a5e'
   ctx.fillRect(x - 5, y - 3, 10, 10)
-  ctx.strokeStyle = withAlpha(C.cyan, 0.16)
-  ctx.lineWidth = 1
+  ctx.strokeStyle = withAlpha(C.cyan, 0.35)
+  ctx.lineWidth = 1.2
   ctx.strokeRect(x - 5, y - 3, 10, 10)
-  ctx.fillStyle = '#221e38'
+  ctx.fillStyle = '#4a4a6e'
   ctx.beginPath()
   ctx.moveTo(x - 9, y - 6)
   ctx.lineTo(x + 6, y - 9)
@@ -481,16 +495,17 @@ function drawEmptyBin(ctx: CanvasRenderingContext2D, x: number, y: number) {
 /** a house that already gave what it had: lights out, door shut */
 function drawShutHouse(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.save()
-  ctx.globalAlpha = 0.55
-  ctx.fillStyle = '#191328'
+  ctx.globalAlpha = 0.8
+  ctx.fillStyle = '#2a2250'
   ctx.fillRect(x - 13, y - 13, 26, 26)
-  ctx.fillStyle = '#221b36'
+  ctx.fillStyle = '#3a3060'
   ctx.fillRect(x - 13, y - 13, 26, 6)
-  ctx.fillStyle = '#2b2440'
+  ctx.fillStyle = '#4a3f70'
   ctx.fillRect(x - 3, y + 1, 6, 12)
-  ctx.strokeStyle = withAlpha(C.cyan, 0.3)
-  ctx.lineWidth = 1
+  ctx.strokeStyle = withAlpha(C.cyan, 0.5)
+  ctx.lineWidth = 1.2
   ctx.strokeRect(x - 3, y + 1, 6, 12)
+  ctx.strokeRect(x - 13, y - 13, 26, 26)
   ctx.restore()
 }
 
@@ -518,76 +533,106 @@ function drawClueProp(ctx: CanvasRenderingContext2D, pr: Prop, r: Region) {
   const neon = pr.data === 'clue' ? C.gold : r.neon
   switch (pr.kind) {
     case 'shop':
-      ctx.fillStyle = '#191330'
+      ctx.fillStyle = '#2c1f4d'
       ctx.fillRect(x - 15, y - 15, 30, 30)
-      ctx.fillStyle = withAlpha(r.neon, 0.75)
+      ctx.fillStyle = withAlpha(r.neon, 0.95)
       ctx.fillRect(x - 15, y - 15, 30, 6)
       ctx.fillStyle = C.ink
-      ctx.font = `12px ${DISPLAY}`
+      ctx.font = `bold 12px ${DISPLAY}`
       ctx.textAlign = 'center'
       ctx.fillText(pr.data === 'food' ? 'FOOD' : 'WATER', x, y + 4)
       ctx.textAlign = 'left'
+      ctx.strokeStyle = withAlpha(r.neon, 0.5)
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x - 15, y - 15, 30, 30)
       break
     case 'bar':
-      ctx.fillStyle = '#20142c'
+      ctx.fillStyle = '#35204a'
       ctx.fillRect(x - 14, y - 14, 28, 28)
-      ctx.fillStyle = withAlpha(r.neon, 0.7)
+      ctx.fillStyle = withAlpha(r.neon, 0.9)
       ctx.fillRect(x - 14, y - 14, 28, 5)
       ctx.fillStyle = C.ink
-      ctx.font = `12px ${DISPLAY}`
+      ctx.font = `bold 12px ${DISPLAY}`
       ctx.textAlign = 'center'
       ctx.fillText('BAR', x, y + 4)
       ctx.textAlign = 'left'
+      ctx.strokeStyle = withAlpha(r.neon, 0.55)
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x - 14, y - 14, 28, 28)
       break
     case 'house':
-      ctx.fillStyle = '#241c38'
+      ctx.fillStyle = '#3a2a58'
       ctx.fillRect(x - 13, y - 13, 26, 26)
-      ctx.fillStyle = withAlpha(r.neon2, 0.5)
+      ctx.fillStyle = withAlpha(r.neon2, 0.75)
       ctx.fillRect(x - 13, y - 13, 26, 6)
-      ctx.fillStyle = withAlpha(C.gold, 0.6)
+      ctx.fillStyle = withAlpha(C.gold, 0.85)
       ctx.fillRect(x - 3, y + 1, 6, 12)
+      ctx.fillStyle = withAlpha(C.cyan, 0.5)
+      ctx.fillRect(x - 4, y - 4, 8, 5)
+      ctx.strokeStyle = withAlpha(r.neon2, 0.35)
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x - 13, y - 13, 26, 26)
       break
     case 'board':
-      ctx.fillStyle = '#3a2a1c'
+      ctx.fillStyle = '#5a3f2a'
       ctx.fillRect(x - 10, y - 13, 20, 16)
-      ctx.fillStyle = '#e8dcc2'
+      ctx.fillStyle = '#f4ead0'
       ctx.fillRect(x - 8, y - 11, 16, 11)
-      ctx.strokeStyle = withAlpha(C.gold, 0.8)
-      ctx.lineWidth = 1
+      ctx.strokeStyle = withAlpha(C.gold, 0.95)
+      ctx.lineWidth = 1.5
       ctx.strokeRect(x - 10, y - 13, 20, 16)
+      ctx.fillStyle = '#4a3420'
+      ctx.font = `bold 9px ${DISPLAY}`
+      ctx.textAlign = 'center'
+      ctx.fillText('POSTED', x, y - 4)
+      ctx.textAlign = 'left'
       break
     case 'radio': {
       const t = performance.now() / 200
-      ctx.fillStyle = '#231a38'
+      ctx.fillStyle = '#35275c'
       ctx.fillRect(x - 9, y - 7, 18, 14)
       ctx.strokeStyle = withAlpha(C.cyan, 0.6 + Math.sin(t) * 0.3)
       ctx.beginPath()
       ctx.moveTo(x + 5, y - 7)
       ctx.lineTo(x + 11, y - 16)
       ctx.stroke()
-      ctx.fillStyle = withAlpha(neon, 0.85)
+      ctx.fillStyle = withAlpha(neon, 0.95)
       ctx.fillRect(x - 6, y - 3, 8, 4)
+      ctx.fillStyle = withAlpha(C.cyan, 0.8)
+      ctx.fillRect(x - 7, y + 1, 3, 3)
+      ctx.fillRect(x - 2, y + 1, 3, 3)
+      ctx.strokeStyle = withAlpha(C.cyan, 0.4)
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x - 9, y - 7, 18, 14)
       break
     }
     case 'graffiti':
-      ctx.strokeStyle = withAlpha(r.neon, 0.9)
-      ctx.lineWidth = 2
+      ctx.fillStyle = '#2c1f45'
+      ctx.fillRect(x - 12, y - 10, 24, 20)
+      ctx.strokeStyle = withAlpha(r.neon, 0.95)
+      ctx.lineWidth = 2.5
       ctx.beginPath()
       ctx.moveTo(x - 9, y + 4)
       ctx.lineTo(x - 3, y - 4)
       ctx.lineTo(x + 2, y + 3)
       ctx.lineTo(x + 8, y - 5)
       ctx.stroke()
+      ctx.strokeStyle = withAlpha(C.cyan, 0.6)
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x - 12, y - 10, 24, 20)
       break
     case 'kid':
-      ctx.fillStyle = '#2b2140'
+      ctx.fillStyle = '#433160'
       ctx.beginPath()
       ctx.arc(x, y, 7, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = withAlpha(C.gold, 0.9)
+      ctx.strokeStyle = withAlpha(C.gold, 0.5)
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.fillStyle = withAlpha(C.gold, 0.95)
       ctx.beginPath()
-      ctx.arc(x - 2, y - 1, 1.4, 0, Math.PI * 2)
-      ctx.arc(x + 2, y - 1, 1.4, 0, Math.PI * 2)
+      ctx.arc(x - 2, y - 1, 1.6, 0, Math.PI * 2)
+      ctx.arc(x + 2, y - 1, 1.6, 0, Math.PI * 2)
       ctx.fill()
       break
   }
@@ -612,7 +657,7 @@ function drawGuard(
   ctx.moveTo(gd.x, gd.y + 6)
   ctx.lineTo(gd.x, gd.y + 14)
   ctx.stroke()
-  ctx.fillStyle = chasing ? C.bad : '#2a3550'
+  ctx.fillStyle = chasing ? C.bad : '#4a5a8a'
   ctx.fillRect(gd.x - 5, gd.y - 10, 10, 3)
   ctx.restore()
 

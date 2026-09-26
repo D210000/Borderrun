@@ -1045,8 +1045,15 @@ export class Game {
       return
     }
 
+    // carry the runner's hard-earned resources (DLI, food, water) into the next
+    // city — only a death (`restartCity`) wipes them. Survival bars reset so the
+    // fresh city opens on a clean day.
+    const carry = { coins: this.player.coins, food: this.player.food, water: this.player.water }
     this.world = generateCity(next)
     this.player = this.makePlayer()
+    this.player.coins = carry.coins
+    this.player.food = carry.food
+    this.player.water = carry.water
     this.day = 1
     this.daysInCity = 1
     this.timeSec = 0
